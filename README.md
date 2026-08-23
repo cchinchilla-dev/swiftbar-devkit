@@ -65,7 +65,7 @@ The services holding local ports — and only yours; editors, language servers a
 system daemons are filtered out.
 
 <p align="center">
-  <img src="docs/screenshots/devports.png" alt="The ports menu listing two services, with one expanded to show its port, project folder and the actions to copy, open or stop it" width="760">
+  <img src="docs/screenshots/devports.png" alt="The ports menu listing two services, with one expanded to show its port, project folder and the actions to copy, open or stop it" width="560">
 </p>
 
 - **Named after the project**, not the file, because entry points tend to all be
@@ -85,7 +85,7 @@ The container VM and everything in it, for
 [Colima](https://github.com/abiosoft/colima) instead of Docker Desktop.
 
 <p align="center">
-  <img src="docs/screenshots/colima.png" alt="The colima menu showing the VM, three containers with their state, and one expanded into its image, published ports, logs, shell and stats" width="520">
+  <img src="docs/screenshots/colima.png" alt="The colima menu showing the VM, three containers with their state, and one expanded into its image, published ports, logs, shell and stats" width="560">
 </p>
 
 - **Containers** with status, logs, a shell, clickable ports and the ID on the
