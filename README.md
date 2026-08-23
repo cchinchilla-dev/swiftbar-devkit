@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/status-work%20in%20progress-orange" alt="work in progress">
+  <img src="https://img.shields.io/badge/status-alpha-orange" alt="alpha">
   <img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT">
   <img src="https://img.shields.io/badge/platform-macOS-lightgrey" alt="macOS">
   <img src="https://img.shields.io/badge/bash-3.2%2B-green" alt="bash 3.2+">
@@ -32,19 +32,15 @@ nothing. A 13 GB model resident while you open one more Chrome window. Four
 commands, in four terminals, that you will run again in ten minutes — kept on
 screen instead, with the fix one click away.
 
-| | |
-| --- | --- |
-| **Repos** | every repository, what is wrong with it, and the commands that fix it |
-| **Dev ports** | which of *your* services still hold a port, and a safe way to stop them |
-| **Colima** | the container VM and everything inside it |
-| **llama-swap** | the local model server, and what it is costing you |
+- **Repos** — every repository, what is wrong with it, and the commands that fix it
+- **Dev ports** — which of *your* services still hold a port, and a safe way to stop them
+- **Colima** — the container VM and everything inside it
+- **llama-swap** — the local model server, and what it is costing you
 
 Bash and the Python macOS ships with: nothing from npm, no daemon of its own, no
 telemetry, one config file. The installer asks which bars you want — one, some
 or all — and offers their dependencies (`colima`, `llama-swap`, `llama.cpp`,
 `jq`) through Homebrew. It never uninstalls anything.
-
----
 
 ## Repos
 
@@ -62,8 +58,6 @@ fix whatever is wrong.
 - **Actions guard themselves**: update refuses on a dirty tree, push refuses
   when the remote is ahead, branch deletion uses the form git can refuse, and
   nothing that rewrites history starts mid-operation.
-
----
 
 ## Dev ports
 
@@ -85,8 +79,6 @@ system daemons are filtered out.
 > executable *and* its start time and refuses unless both still match. The name
 > alone settles nothing when every JVM is called `java`.
 
----
-
 ## Colima
 
 The container VM and everything in it, for
@@ -105,8 +97,6 @@ The container VM and everything in it, for
   registered and Docker actually answering. Conflating them is how a bar ends
   up lying to you, so each has its own fix.
 
----
-
 ## llama-swap
 
 The local model server, for [llama-swap](https://github.com/mostlygeek/llama-swap)
@@ -122,8 +112,6 @@ llama-swap installs happily without llama.cpp, and then every load fails.
 - **What it costs**: RAM against the machine's total, GPU, swap, and the context
   window in use. Loading asks first — it evicts whatever is resident and reads
   gigabytes off disk.
-
----
 
 ## Configure
 
@@ -160,8 +148,6 @@ provide `docker`, but **it will not remove it**.
 `bash install.sh --uninstall` removes the symlinks and leaves everything else.
 </details>
 
----
-
 ## Tests
 
 ```bash
@@ -175,8 +161,6 @@ during a half-finished merge changes nothing, that a kill refuses unless the
 process is still the one the menu recorded, that a config file cannot switch off
 the confirmation guarding a batch `SIGKILL`, and that every button points at a
 script that exists.
-
----
 
 ## License
 

@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Syntax
+    # macOS ships bash 3.2, and that is the version these scripts have to
+    # survive. Linting on Linux would quietly accept syntax that fails on the
+    # machines this actually runs on.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+      - name: Parse every shell script
+        run: |
+          for f in plugins/*.sh bin/* install.sh test/*.sh; do
+            bash -n "$f" || exit 1
+          done
+      - name: Parse the Python bar
+        run: python3 -c "import ast; ast.parse(open('plugins/devports.15s.py').read())"
+      - name: Check the issue templates are valid YAML
+        run: |
+          python3 - <<'PY'
+          import glob, sys
+          try:
+              import yaml
+          except ImportError:
+              print("pyyaml not present, skipping"); sys.exit(0)
+          for f in glob.glob(".github/**/*.yml", recursive=True):
+              yaml.safe_load(open(f))
+              print("ok", f)
+          PY
+
+  test:
+    name: Tests
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+      - name: Identify to git
+        # The fixtures commit, and a runner has no global identity configured.
+        run: |
+          git config --global user.email "ci@example.com"
+          git config --global user.name "CI"
+      - name: Run the suite
+        run: bash test/tests.sh
+
+  render:
+    name: Bars render on a clean machine
+    # None of the tools the bars talk to are installed here, which is the
+    # point: a bar whose binary is missing must still draw a menu saying so,
+    # not fail. This is the closest thing to a first-run check.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+      - name: Render each bar with nothing installed
+        run: |
+          set -e
+          for bar in plugins/repos.60s.sh plugins/colima.15s.sh plugins/llama.5s.sh; do
+            out="$(bash "$bar")"
+            [ -n "$out" ] || { echo "$bar printed nothing"; exit 1; }
+            echo "── $bar"; printf '%s\n' "$out" | head -5
+          done
+          out="$(python3 plugins/devports.15s.py)"
+          [ -n "$out" ] || { echo "devports printed nothing"; exit 1; }
+          echo "── devports"; printf '%s\n' "$out" | head -5

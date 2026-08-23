@@ -109,6 +109,12 @@ lacks "mid-merge: does not offer Update"   "$MERGE_BLOCK" "Update (pull"
 
 echo
 echo "── COPY ONE COMMAND AT A TIME ────────────────────────"
+if ! have_clipboard; then
+  skip "the clipboard assertions: no working pasteboard here"
+  CLIPBOARD=0
+else
+  CLIPBOARD=1
+fi
 # The payload is read out of the rendered menu rather than rebuilt here, so the
 # test follows the wire format instead of restating it: a command carrying
 # spaces travels as b64:… , a plain value travels literally.
@@ -122,9 +128,11 @@ bash "$P" copy-one "$T/group-a/with-stash" "$(B64 with-stash 1)" >/dev/null 2>&1
 # A value with no b64: prefix is a literal by design — that is what lets a menu
 # drawn by an older version still be understood. Undecodable base64 behind the
 # prefix is the real error case, and it must not put junk on the clipboard.
-BEFORE="$(pbpaste)"
-bash "$P" copy-one "$T/group-a/with-stash" "b64:not-valid-base64!!" >/dev/null 2>&1
-equals "copy-one: undecodable payload copies nothing" "$(pbpaste)" "$BEFORE"
+if [ "$CLIPBOARD" = 1 ]; then
+  BEFORE="$(pbpaste)"
+  bash "$P" copy-one "$T/group-a/with-stash" "b64:not-valid-base64!!" >/dev/null 2>&1
+  equals "copy-one: undecodable payload copies nothing" "$(pbpaste)" "$BEFORE"
+fi
 # The commands under "How to fix it" are copied one by one too, without their
 # comment: the menu shows it, the clipboard does not carry it.
 bash "$P" copy-one "$T/group-b/dirty-behind" "$(B64 dirty-behind 1)" >/dev/null 2>&1
@@ -186,28 +194,33 @@ bash "$P" fetch-all "$T/group-a/clean|$T/group-a/behind" >/dev/null 2>&1
 
 echo
 bash "$S/fixtures.sh" "$T" >/dev/null   # clean slate: these sections assume the original scenarios
-echo "── SUGGESTED COMMANDS ────────────────────────────────"
-CM() { bash "$P" copy-all "$T/$1" >/dev/null 2>&1; pbpaste; }
-equals "behind: suggests pull --ff-only"      "$(CM group-a/behind)"   "git pull --ff-only"
-has    "diverged: suggests pull --rebase"     "$(CM group-a/diverged)" "git pull --rebase"
-has    "dirty: suggests a commit"             "$(CM group-a/dirty)"    "git add -A"
-# origin/main DOES exist in that repo: the right fix is to re-attach, not recreate
-# a branch genuinely absent from the remote: that is when push -u is right
-git -C "$T/group-a/clean" switch -q -c invented
-has    "branch missing on origin: suggests push -u" \
-       "$(CM group-a/clean)" "git push -u origin invented"
-git -C "$T/group-a/clean" switch -q main
-has    "dirty-behind: commit comes first"     "$(CM group-b/dirty-behind | head -1)" "git add -A"
-# What gets copied has to paste and run as-is: zsh ships without
-# interactive_comments, so a single hash breaks the line.
-equals "copy-all: no comments"                "$(CM group-b/dirty-behind | grep -c '#')" "0"
-equals "copy-all: commands only"              "$(CM group-b/dirty-behind | grep -c .)"   "3"
-# Counted, not pattern-matched: BSD cat has no -A, so the old check produced
-# nothing and passed for the wrong reason.
-# The copy-all button only makes sense when there is more than one command.
-# Singular and plural, no "(s)".
+if [ "$CLIPBOARD" != 1 ]; then
+  skip "the suggested-command assertions: they read the clipboard"
+else
+  echo "── SUGGESTED COMMANDS ────────────────────────────────"
+  CM() { bash "$P" copy-all "$T/$1" >/dev/null 2>&1; pbpaste; }
+  equals "behind: suggests pull --ff-only"      "$(CM group-a/behind)"   "git pull --ff-only"
+  has    "diverged: suggests pull --rebase"     "$(CM group-a/diverged)" "git pull --rebase"
+  has    "dirty: suggests a commit"             "$(CM group-a/dirty)"    "git add -A"
+  # origin/main DOES exist in that repo: the right fix is to re-attach, not recreate
+  # a branch genuinely absent from the remote: that is when push -u is right
+  git -C "$T/group-a/clean" switch -q -c invented
+  has    "branch missing on origin: suggests push -u" \
+         "$(CM group-a/clean)" "git push -u origin invented"
+  git -C "$T/group-a/clean" switch -q main
+  has    "dirty-behind: commit comes first"     "$(CM group-b/dirty-behind | head -1)" "git add -A"
+  # What gets copied has to paste and run as-is: zsh ships without
+  # interactive_comments, so a single hash breaks the line.
+  equals "copy-all: no comments"                "$(CM group-b/dirty-behind | grep -c '#')" "0"
+  equals "copy-all: commands only"              "$(CM group-b/dirty-behind | grep -c .)"   "3"
+  # Counted, not pattern-matched: BSD cat has no -A, so the old check produced
+  # nothing and passed for the wrong reason.
+  # The copy-all button only makes sense when there is more than one command.
+  # Singular and plural, no "(s)".
 
-echo
+  echo
+fi
+
 echo "── PUSH ──────────────────────────────────────────────"
 has    "push with the remote ahead: rejected" \
        "$(bash "$P" push "$T/group-a/diverged" 2>&1)" "ALERT"
@@ -242,37 +255,41 @@ equals "stash: leaves the tree clean" \
        "$(git -C "$T/group-a/dirty" status --porcelain | grep -c .)" "0"
 
 echo
-echo "── SEQUENCES ACTUALLY EXECUTED ───────────────────────"
-bash "$S/fixtures.sh" "$T" >/dev/null
+if [ "$CLIPBOARD" != 1 ]; then
+  skip "running the suggested sequences: they read the clipboard"
+else
+  echo "── SEQUENCES ACTUALLY EXECUTED ───────────────────────"
+  bash "$S/fixtures.sh" "$T" >/dev/null
 
-# Runs the suggested commands as-is, filling in the placeholders.
-run_suggestion() {
-  local d="$T/$1" cmds
-  bash "$P" copy-all "$d" >/dev/null 2>&1
-  cmds="$(pbpaste)"
-  while IFS= read -r c; do
-    case "$c" in ""|\#*) continue;; esac
-    c="${c/\"...\"/\"automated test\"}"
-    c="${c/<new-branch>/rescued}"
-    c="${c/<branch>/main}"
-    ( cd "$d" && eval "$c" ) >/dev/null 2>&1
-  done <<< "$cmds"
-}
+  # Runs the suggested commands as-is, filling in the placeholders.
+  run_suggestion() {
+    local d="$T/$1" cmds
+    bash "$P" copy-all "$d" >/dev/null 2>&1
+    cmds="$(pbpaste)"
+    while IFS= read -r c; do
+      case "$c" in ""|\#*) continue;; esac
+      c="${c/\"...\"/\"automated test\"}"
+      c="${c/<new-branch>/rescued}"
+      c="${c/<branch>/main}"
+      ( cd "$d" && eval "$c" ) >/dev/null 2>&1
+    done <<< "$cmds"
+  }
 
-# Compact final state: dirty/behind/ahead
-final_state() {
-  local d="$T/$1"
-  echo "$(git -C "$d" status --porcelain | grep -c . | tr -d ' ')/$(git -C "$d" rev-list --left-right --count '@{upstream}...HEAD' 2>/dev/null | tr '\t' '/' || echo '?')"
-}
+  # Compact final state: dirty/behind/ahead
+  final_state() {
+    local d="$T/$1"
+    echo "$(git -C "$d" status --porcelain | grep -c . | tr -d ' ')/$(git -C "$d" rev-list --left-right --count '@{upstream}...HEAD' 2>/dev/null | tr '\t' '/' || echo '?')"
+  }
 
-for case_name in group-a/behind group-a/dirty group-b/no-upstream; do
-  run_suggestion "$case_name"
-  equals "$(basename $case_name): ends clean and in sync" "$(final_state "$case_name")" "0/0/0"
-done
+  for case_name in group-a/behind group-a/dirty group-b/no-upstream; do
+    run_suggestion "$case_name"
+    equals "$(basename $case_name): ends clean and in sync" "$(final_state "$case_name")" "0/0/0"
+  done
 
-run_suggestion group-b/detached
-equals "detached: ends up on a branch" \
-       "$(git -C "$T/group-b/detached" symbolic-ref --quiet --short HEAD >/dev/null 2>&1 && echo yes || echo no)" "yes"
+  run_suggestion group-b/detached
+  equals "detached: ends up on a branch" \
+         "$(git -C "$T/group-b/detached" symbolic-ref --quiet --short HEAD >/dev/null 2>&1 && echo yes || echo no)" "yes"
+fi
 
 echo
 printf "  repos: %d passed, %d failed\n" "$PASS" "$FAIL"

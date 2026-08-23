@@ -37,3 +37,12 @@ report() {   # $1=suite name
 }
 
 section() { echo; echo "── $1 $(printf '%.0s─' $(seq 1 $((50 - ${#1}))))"; }
+
+# Some assertions need a real pasteboard, which a headless CI runner may not
+# have. Skipping loudly beats a red build over something the code never broke.
+have_clipboard() {
+  command -v pbcopy >/dev/null 2>&1 || return 1
+  printf 'probe' | pbcopy 2>/dev/null && [ "$(pbpaste 2>/dev/null)" = "probe" ]
+}
+
+skip() { printf "  \033[33mSKIP\033[0m %s\n" "$1"; }
