@@ -1,0 +1,94 @@
+name: Bug Report
+description: Report a bug in swiftbar-devkit
+labels: ["bug"]
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A bar that shows the wrong thing and a button that does nothing are both
+        bugs worth reporting. If a click seemed to do nothing at all, the
+        Settings submenu of that bar shows which paths it resolved — that is
+        usually where the answer is.
+
+  - type: dropdown
+    id: bar
+    attributes:
+      label: Which bar
+      options:
+        - Repos
+        - Dev ports
+        - Colima
+        - llama-swap
+        - The installer
+        - Something else
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What happened?
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Minimal steps to reproduce the behavior
+      placeholder: |
+        1. Open the Repos bar
+        2. Click "Switch branch" on a repository with...
+        3. See...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: output
+    attributes:
+      label: What the bar renders
+      description: |
+        Run the plugin from a terminal and paste the output — it is plain text
+        and shows exactly what SwiftBar was given.
+      placeholder: bash ~/.swiftbar/repos.60s.sh
+      render: shell
+
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version
+      placeholder: "15.2"
+    validations:
+      required: true
+
+  - type: input
+    id: versions
+    attributes:
+      label: SwiftBar and shell
+      description: "`swiftbar --version` if you have it, plus `bash --version`"
+      placeholder: "SwiftBar 2.0.1, bash 3.2.57"
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: "`bash test/tests.sh` passes on my machine, or I have said which assertions fail"
+        - label: I have removed anything internal from the paths and output I pasted
+          required: true

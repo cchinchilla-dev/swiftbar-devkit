@@ -1,0 +1,39 @@
+name: Feature Request
+description: Suggest something for swiftbar-devkit
+labels: ["enhancement"]
+
+body:
+  - type: dropdown
+    id: bar
+    attributes:
+      label: Which bar
+      options:
+        - Repos
+        - Dev ports
+        - Colima
+        - llama-swap
+        - The installer
+        - A new bar
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What are you doing today instead, and why is it tedious?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you would like
+      description: What would the menu show, and what would clicking it do?
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you considered
