@@ -23,7 +23,7 @@ cd swiftbar-devkit && bash install.sh
 ```
 
 <p align="center">
-  <img src="docs/screenshots/repos.png" alt="The repos menu open, showing two groups of repositories with their state, and a stash entry expanded into the commands that restore it" width="820">
+  <img src="docs/screenshots/repos-list.png" alt="The repos menu: two groups of repositories, each with its branch and what is pending, and a stash entry expanded into the commands that restore it" width="480">
 </p>
 
 Thirty repositories and no idea which three are behind. Something still holding
@@ -47,6 +47,10 @@ or all — and offers their dependencies (`colima`, `llama-swap`, `llama.cpp`,
 Every repository under your roots, grouped by folder, with the exact commands to
 fix whatever is wrong.
 
+<p align="center">
+  <img src="docs/screenshots/repos-actions.png" alt="One repository expanded: its two stashes, switching branches, clearing branches whose upstream is gone, and opening it in a terminal, on the remote or in an IDE" width="480">
+</p>
+
 - **Branches** local and remote: switch between them, or clear out the ones
   whose remote is gone. A dirty tree is offered a stash first.
 - **Stashes** listed one by one, each with its own `show` / `apply` / `pop`.
@@ -65,7 +69,7 @@ The services holding local ports — and only yours; editors, language servers a
 system daemons are filtered out.
 
 <p align="center">
-  <img src="docs/screenshots/devports.png" alt="The ports menu listing two services, with one expanded to show its port, project folder and the actions to copy, open or stop it" width="560">
+  <img src="docs/screenshots/devports.png" alt="The ports menu listing two services, with one expanded to show its port, project folder and the actions to copy, open or stop it" width="480">
 </p>
 
 - **Named after the project**, not the file, because entry points tend to all be
@@ -85,7 +89,7 @@ The container VM and everything in it, for
 [Colima](https://github.com/abiosoft/colima) instead of Docker Desktop.
 
 <p align="center">
-  <img src="docs/screenshots/colima.png" alt="The colima menu showing the VM, three containers with their state, and one expanded into its image, published ports, logs, shell and stats" width="560">
+  <img src="docs/screenshots/colima.png" alt="The colima menu showing the VM, three containers with their state, and one expanded into its image, published ports, logs, shell and stats" width="480">
 </p>
 
 - **Containers** with status, logs, a shell, clickable ports and the ID on the
@@ -104,7 +108,7 @@ in front of [llama.cpp](https://github.com/ggml-org/llama.cpp). You need both �
 llama-swap installs happily without llama.cpp, and then every load fails.
 
 <p align="center">
-  <img src="docs/screenshots/llama.png" alt="The llama-swap menu with the service running, two models listed, one loaded and expanded into its context use, unload and slots" width="560">
+  <img src="docs/screenshots/llama.png" alt="The llama-swap menu with the service running, two models listed, one loaded and expanded into its context use, unload and slots" width="480">
 </p>
 
 - **Which model is loaded**, named in the menu bar itself.
