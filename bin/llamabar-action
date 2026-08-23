@@ -1,0 +1,141 @@
+#!/bin/bash
+# Actions invoked from the SwiftBar plugin llama.5s.sh.
+set -uo pipefail
+export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+
+VERB="${1:-}"
+ARG="${2:-}"
+
+CONFIG="${SWIFTBAR_CONFIG:-$HOME/.config/swiftbar-devkit/config.sh}"
+# The confirmation bypass is a test-only escape hatch, so remember whether the
+# ENVIRONMENT set it and restore that afterwards: the config file is sourced
+# right below, and a config must never be able to switch off the confirmations
+# that guard destructive actions.
+_ENV_ASSUME_YES="${LLAMA_ASSUME_YES:-}"
+# shellcheck source=/dev/null
+[ -f "$CONFIG" ] && . "$CONFIG"
+LLAMA_ASSUME_YES="$_ENV_ASSUME_YES"
+
+ADDR="${LLAMA_ADDR:-http://127.0.0.1:8083}"
+SWAP_CONFIG="${LLAMA_CONFIG:-$HOME/.llama-swap/config.yaml}"
+LOG="${LLAMA_LOG:-$HOME/Library/Logs/llama-swap.log}"
+LABEL="${LLAMA_SERVICE_LABEL:-com.mostlygeek.llama-swap}"
+PLIST="${LLAMA_SERVICE_PLIST:-$HOME/Library/LaunchAgents/$LABEL.plist}"
+CACHE="${TMPDIR:-/tmp}/llamabar"
+mkdir -p "$CACHE"
+
+# AppleScript is source code, so a model name carrying a quote or a backslash
+# turns the script into a syntax error and the dialog silently never appears —
+# with the destructive action still queued behind it. Escape both.
+as_quote() { local s="${1//\\/\\\\}"; printf '%s' "${s//\"/\\\"}"; }
+
+notify() {
+  osascript -e "display notification \"$(as_quote "$2")\" with title \"$(as_quote "$1")\"" \
+    >/dev/null 2>&1
+}
+
+# Cancel is the default button: this only ever guards destructive actions.
+confirm() {
+  [[ -n "${LLAMA_ASSUME_YES:-}" ]] && return 0
+  osascript >/dev/null 2>&1 <<AS
+display alert "$(as_quote "$1")" message "$(as_quote "$2")" as critical buttons {"Cancel", "Continue"} default button 1 cancel button 1
+AS
+}
+
+# Loading a model can take minutes and there is no window to watch, so the menu
+# reads this marker and says what is happening. The trap clears it even if the
+# action fails or is killed, so it is never left behind.
+mark()   { echo "$1" > "$CACHE/operation"; trap unmark EXIT INT TERM; }
+unmark() { rm -f "$CACHE/operation"; }
+
+case "$VERB" in
+  # ---- the daemon, through launchd
+  svcstart)
+    [ -f "$PLIST" ] || { notify "Cannot start" "No launch agent at ${PLIST/#$HOME/~}"; exit 1; }
+    mark "Starting the service…"
+    launchctl bootstrap "gui/$(id -u)" "$PLIST" 2>/dev/null
+    ;;
+
+  svcstop)
+    # Stopping takes the loaded model down with it, which on a 13 GB model is
+    # minutes of reloading to undo a misclick.
+    confirm "Stop llama-swap?" \
+"Any loaded model is unloaded with it, and the next request has to load it
+again from disk." || exit 0
+    mark "Stopping the service…"
+    launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null
+    ;;
+
+  svcrestart)
+    mark "Restarting the service…"
+    launchctl kickstart -k "gui/$(id -u)/$LABEL" 2>/dev/null
+    ;;
+
+  # ---- models
+  #
+  # There is no load endpoint: llama-swap loads on demand, so the smallest
+  # honest request is one token. -m 900 because a 13 GB model off a cold cache
+  # genuinely takes minutes; the marker is what keeps the menu honest meanwhile.
+  load)
+    [ -n "$ARG" ] || exit 1
+    confirm "Load $ARG?" \
+"Its group is exclusive, so whatever model is loaded now will be unloaded
+first. Loading reads the whole model from disk and can take minutes." || exit 0
+    mark "Loading $ARG…"
+    OUT="$(curl -s -m 900 "$ADDR/v1/chat/completions" \
+      -H 'Content-Type: application/json' \
+      -d "$(printf '{"model":%s,"max_tokens":1,"messages":[{"role":"user","content":"hi"}]}' \
+            "$(printf '%s' "$ARG" | sed 's/\\/\\\\/g; s/"/\\"/g; s/^/"/; s/$/"/')")" 2>&1)"
+    if printf '%s' "$OUT" | grep -q '"error"'; then
+      notify "Could not load $ARG" "$(printf '%s' "$OUT" | head -c 180)"
+    else
+      notify "Loaded" "$ARG is ready."
+    fi
+    ;;
+
+  unloadone)
+    [ -n "$ARG" ] || exit 1
+    curl -s -m 60 "$ADDR/unload?model=$ARG" >/dev/null 2>&1
+    notify "Unloaded" "$ARG released its memory."
+    ;;
+
+  unload)
+    curl -s -m 60 "$ADDR/unload" >/dev/null 2>&1
+    notify "Unloaded" "Every model released its memory."
+    ;;
+
+  # ---- opening things
+  ui)         open "$ADDR/ui/" >/dev/null 2>&1 ;;
+  logs)       [ -f "$LOG" ] && open -a Console "$LOG" || notify "No log" "${LOG/#$HOME/~} does not exist yet." ;;
+  editswap)   open -t "$SWAP_CONFIG" >/dev/null 2>&1 ;;
+  copyurl)    printf '%s' "$ADDR/v1" | pbcopy; notify "Copied" "$ADDR/v1" ;;
+
+  openconfig)
+    [ -f "$CONFIG" ] || { mkdir -p "$(dirname "$CONFIG")"; : > "$CONFIG"; }
+    open -e "$CONFIG"
+    ;;
+
+  set)
+    [ -f "$CONFIG" ] || { mkdir -p "$(dirname "$CONFIG")"; : > "$CONFIG"; }
+    python3 - "$CONFIG" "$ARG" "${3:-}" <<'PY'
+import re, sys
+path, key, value = sys.argv[1:4]
+txt = open(path).read()
+# This file is sourced by every bar, so a value is shell code, not just text.
+# $HOME is spared on purpose so stored paths stay portable between machines.
+def quote(v):
+    out = v.replace("\\", "\\\\").replace('"', '\\"').replace("`", "\\`")
+    return re.sub(r'\$(?!HOME\b)', r'\\$', out)
+line = '%s="%s"' % (key, quote(value))
+pat = re.compile(r'^%s=.*$' % re.escape(key), re.M)
+txt = pat.sub(lambda _: line, txt, count=1) if pat.search(txt) else txt.rstrip() + "\n" + line + "\n"
+open(path, "w").write(txt)
+PY
+    notify "Settings" "$ARG = ${3:-}"
+    ;;
+
+  *)
+    echo "Unknown verb: $VERB" >&2
+    exit 1
+    ;;
+esac

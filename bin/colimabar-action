@@ -1,0 +1,251 @@
+#!/bin/bash
+# Actions invoked from the SwiftBar plugin colima.15s.sh.
+set -uo pipefail
+export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
+
+CACHE="${TMPDIR:-/tmp}/colimabar"
+VERB="${1:-}"
+ARG="${2:-}"
+
+# Registry hostnames and the like belong to whoever runs this, not to the code.
+CONFIG="${SWIFTBAR_CONFIG:-$HOME/.config/swiftbar-devkit/config.sh}"
+# The confirmation bypass is a test-only escape hatch, so remember whether the
+# ENVIRONMENT set it and restore that afterwards: the config file is sourced
+# right below, and a config must never be able to switch off the confirmations
+# that guard destructive actions.
+_ENV_ASSUME_YES="${COLIMABAR_ASSUME_YES:-}"
+# shellcheck source=/dev/null
+[ -f "$CONFIG" ] && . "$CONFIG"
+COLIMABAR_ASSUME_YES="$_ENV_ASSUME_YES"
+: "${COLIMA_REGISTRY:=}"
+: "${COLIMA_REGISTRY_USER_VAR:=}"
+
+# AppleScript is source code, so a container name carrying a quote or a
+# backslash turns the script into a syntax error and the dialog silently never
+# appears — with the destructive action still queued behind it. Escape both.
+as_quote() { local s="${1//\\/\\\\}"; printf '%s' "${s//\"/\\\"}"; }
+
+notify() {
+  osascript -e "display notification \"$(as_quote "$2")\" with title \"$(as_quote "$1")\"" \
+    >/dev/null 2>&1
+}
+
+# Cancel is the default button: this guards destructive verbs, so a stray
+# Return must not confirm them.
+confirm() {
+  [[ -n "${COLIMABAR_ASSUME_YES:-}" ]] && return 0
+  osascript >/dev/null 2>&1 <<AS
+display alert "$(as_quote "$1")" message "$(as_quote "$2")" as critical buttons {"Cancel", "Remove"} default button 1 cancel button 1
+AS
+}
+
+# Verbs that run in a terminal benefit from a pause at the end.
+# Without a terminal (terminal=false) there is no stdin: do not block.
+pause() {
+  [[ -t 0 ]] || return 0
+  echo; read -r -p "Press Enter to close… " _
+}
+
+# With terminal=false there is no window showing progress, and starting or
+# stopping the VM takes half a minute. The marker lets the menu say what is
+# going on; the trap clears it even if the action fails or gets killed, so it
+# never gets left behind.
+mkdir -p "$CACHE"
+mark()   { echo "$1" > "$CACHE/operation"; trap unmark EXIT INT TERM; }
+unmark() { rm -f "$CACHE/operation"; }
+
+# SwiftBar opens the terminal.true window by sending Cmd+T through System
+# Events, which needs Accessibility permission. Without it the AppleScript
+# aborts right after the activate: the window opens and the command never runs.
+# `open -a Terminal` uses no System Events and needs no permission, so the
+# verbs that want a window are invoked with terminal=false and relaunched here.
+# COLIMABAR_NO_TERMINAL=1 disables it, to test them without opening windows.
+in_terminal() {
+  [[ -t 1 ]] && return 1                          # already in a terminal: carry on
+  [[ -n "${COLIMABAR_NO_TERMINAL:-}" ]] && return 1
+  find "$CACHE" -name 'run-*.command' -mmin +5 -delete 2>/dev/null
+  local script="$CACHE/run-$$.command"
+  {
+    printf '#!/bin/bash\n'
+    printf 'exec %q' "$0"
+    local a; for a in "$@"; do printf ' %q' "$a"; done
+    printf '\n'
+  } > "$script"
+  chmod +x "$script"
+  open -a Terminal "$script"
+  return 0
+}
+
+case "${1:-}" in
+  logs|exec|stats|shell|prune|prune-all|fixcreds|lazy)
+    in_terminal "$@" && exit 0
+    ;;
+esac
+
+case "$VERB" in
+  # ---- VM
+  # mark/unmark: these take half a minute with terminal=false, so without a
+  # marker the menu looked like the click had done nothing and invited a
+  # second one on top of the first.
+  start)     mark "Starting…";   colima start ${ARG:+--profile "$ARG"} ;;
+  stop)      mark "Stopping…";   colima stop  ${ARG:+"$ARG"} ;;
+  restart)   mark "Restarting…"; colima restart ${ARG:+"$ARG"} ;;
+  # --profile, like every other call here: without it these two always spoke
+  # to the default instance, whatever the menu was showing.
+  shell)     colima ssh ${ARG:+--profile "$ARG"} ;;
+
+  ccopy)
+    printf '%s' "$ARG" | pbcopy
+    notify "Copied" "$ARG"
+    ;;
+
+  # Switch the client back to the Colima endpoint. The usual reason the VM is
+  # up and docker still says nothing: a context left over from Docker Desktop.
+  usecontext)
+    if OUT="$(docker context use colima 2>&1)"; then
+      notify "Docker" "Now using the colima context."
+    else
+      notify "Could not switch context" "$OUT"
+    fi
+    ;;
+
+  # ---- containers
+  cstart)    docker start "$ARG" ;;
+  cstop)     docker stop "$ARG" ;;
+  crestart)  docker restart "$ARG" ;;
+  # Ask first. This sits one line under Start in the same submenu, and it is
+  # the only destructive verb here that used to fire instantly — prune and
+  # prune-all both go through a Terminal and docker's own y/N prompt. Removing
+  # a container drops its writable layer and config for good.
+  crm)
+    confirm "Remove container ${3:-$ARG}?" \
+"Its writable layer and configuration are deleted permanently. Named volumes survive; anonymous ones are orphaned.
+
+This cannot be undone." || exit 0
+    OUT="$(docker rm "$ARG" 2>&1)" \
+      || notify "Could not remove" "$OUT"
+    ;;
+  logs)      docker logs -f --tail 200 "$ARG" ;;
+  stats)     docker stats "$ARG" ;;
+  exec)
+    # Try bash, fall back to sh for distroless/alpine images
+    docker exec -it "$ARG" bash 2>/dev/null || docker exec -it "$ARG" sh
+    ;;
+
+  # ---- cleanup
+  prune)
+    docker system prune
+    rm -f "$CACHE"/df "$CACHE"/vmdf "$CACHE"/vmdf-*
+    pause
+    ;;
+  prune-all)
+    echo "This removes ALL unused images, not just the dangling ones."
+    docker system prune -a
+    rm -f "$CACHE"/df "$CACHE"/vmdf "$CACHE"/vmdf-*
+    pause
+    ;;
+  uncache)
+    rm -f "$CACHE"/df "$CACHE"/vmdf "$CACHE"/vmdf-*
+    ;;
+
+  # ---- credentials
+  fixcreds)
+    if ! command -v docker-credential-osxkeychain >/dev/null 2>&1; then
+      echo "Helper missing. Installing…"
+      brew install docker-credential-helper || { pause; exit 1; }
+    fi
+    CFG="$HOME/.docker/config.json"
+    cp "$CFG" "$CFG.bak.$(date +%Y%m%d%H%M%S)"
+    python3 - "$CFG" <<'PY'
+import json, sys
+p = sys.argv[1]
+d = json.load(open(p))
+d["credsStore"] = "osxkeychain"
+d.pop("auths", None)
+json.dump(d, open(p, "w"), indent=2)
+print("config.json cleaned; backup saved.")
+PY
+    echo
+    echo "Sign in to the registry again:"
+    if [ -n "$COLIMA_REGISTRY" ]; then
+      if [ -n "$COLIMA_REGISTRY_USER_VAR" ]; then
+        echo "  docker login $COLIMA_REGISTRY -u \"\$$COLIMA_REGISTRY_USER_VAR\""
+      else
+        echo "  docker login $COLIMA_REGISTRY"
+      fi
+    else
+      echo "  docker login <registry>"
+      echo
+      echo "Set COLIMA_REGISTRY in $CONFIG to have that filled in."
+    fi
+    pause
+    ;;
+
+  # ---- autostart (Homebrew services)
+  svcon)
+    mark "Starting the service…"
+    # The launchd agent runs `colima start -f`, which stays in the foreground
+    # and IS the service. If the VM is already up, that command exits instantly
+    # with "already running, ignoring"; and since the plist carries KeepAlive
+    # with SuccessfulExit, launchd relaunches it every 10 s in a loop: the
+    # process never gets to live, `brew services list` says "stopped" forever
+    # and the menu stays stuck on "Service stopped".
+    # Hence: stop the VM before handing control over to the service.
+    if colima status ${ARG:+--profile "$ARG"} >/dev/null 2>&1; then
+      echo "The VM is already up. Stopping it so the service can take over,"
+      echo "since the service is what must hold it in the foreground. Takes a moment…"
+      colima stop ${ARG:+"$ARG"}
+    fi
+    brew services start colima
+    rm -f "$CACHE"/svc
+    unmark
+    pause
+    ;;
+  svcoff)
+    mark "Stopping the service…"
+    # brew services only unloads the agent: the VM lives on separately
+    brew services stop colima
+    # The profile the menu is showing, like every other call here: without it
+    # this stopped the default instance while the real one kept running.
+    colima stop ${ARG:+"$ARG"}
+    rm -f "$CACHE"/svc
+    unmark
+    pause
+    ;;
+
+  # ---- extras
+  lazy)
+    if command -v lazydocker >/dev/null 2>&1; then
+      lazydocker
+    else
+      echo "lazydocker is not installed."
+      read -r -p "Install it with Homebrew? [y/N] " r
+      [[ "$r" == "y" || "$r" == "Y" ]] && brew install lazydocker && lazydocker
+    fi
+    ;;
+
+  # ---- settings, driven from the menu
+  set)
+    [ -f "$CONFIG" ] || { mkdir -p "$(dirname "$CONFIG")"; : > "$CONFIG"; }
+    python3 - "$CONFIG" "$ARG" "${3:-}" <<'PYEOF'
+import re, sys
+path, key, value = sys.argv[1:4]
+txt = open(path).read()
+line = '%s="%s"' % (key, value)
+pat = re.compile(r'^%s=.*$' % re.escape(key), re.M)
+txt = pat.sub(lambda _: line, txt, count=1) if pat.search(txt) else txt.rstrip() + "\n" + line + "\n"
+open(path, "w").write(txt)
+PYEOF
+    osascript -e "display notification \"$ARG = ${3:-}\" with title \"Settings\"" >/dev/null 2>&1
+    ;;
+
+  openconfig)
+    [ -f "$CONFIG" ] || { mkdir -p "$(dirname "$CONFIG")"; : > "$CONFIG"; }
+    open -e "$CONFIG"
+    ;;
+
+  *)
+    echo "Unknown verb: $VERB" >&2
+    exit 1
+    ;;
+esac

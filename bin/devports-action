@@ -1,0 +1,275 @@
+#!/bin/bash
+# Actions invoked from the SwiftBar plugin devports.15s.py.
+set -uo pipefail
+export PATH="/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:$PATH"
+
+VERB="${1:-}"
+ARG="${2:-}"
+EXPECTED="${3:-}"
+
+CONFIG="${SWIFTBAR_CONFIG:-$HOME/.config/swiftbar-devkit/config.sh}"
+# Sourced, not just written to: the IDE to open a project with lives here.
+# The confirmation bypass is a test-only escape hatch, so remember whether the
+# ENVIRONMENT set it and restore that afterwards: the config file is sourced
+# right below, and a config must never be able to switch off the confirmations
+# that guard destructive actions.
+_ENV_ASSUME_YES="${DEVPORTS_ASSUME_YES:-}"
+# shellcheck source=/dev/null
+[ -f "$CONFIG" ] && . "$CONFIG"
+DEVPORTS_ASSUME_YES="$_ENV_ASSUME_YES"
+
+as_quote() { local s="${1//\\/\\\\}"; printf '%s' "${s//\"/\\\"}"; }
+
+# Escaped like confirm() already is: a project directory named with a quote
+# turned the notification into an AppleScript syntax error, so the message
+# simply never appeared.
+notify() {
+  osascript -e "display notification \"$(as_quote "$2")\" with title \"$(as_quote "$1")\"" \
+    >/dev/null 2>&1
+}
+
+unb64() { printf '%s' "$1" | base64 -D 2>/dev/null || printf '%s' "$1" | base64 -d 2>/dev/null; }
+
+# `ps -o lstart=` pads its column with trailing spaces, and $( ) strips only
+# trailing NEWLINES — so this side kept padding that the plugin had already
+# removed with Python's .strip(). `tr -s` collapses runs but never deletes the
+# trailing one, so every fully identified process compared unequal and every
+# kill was refused. Word splitting on the default IFS trims both ends and
+# collapses interior runs in one go, without forking.
+norm_ws() { local IFS=$' \t\n'; set -f; set -- $1; set +f; printf '%s' "$*"; }
+
+# Cancel is the default button: this only ever guards destructive verbs.
+confirm() {
+  [[ -n "${DEVPORTS_ASSUME_YES:-}" ]] && return 0
+  osascript >/dev/null 2>&1 <<AS
+display alert "$(as_quote "$1")" message "$(as_quote "$2")" as critical buttons {"Cancel", "Continue"} default button 1 cancel button 1
+AS
+}
+
+# Rewrites one key so the settings menu can edit it without a text editor.
+set_config() {   # $1=key  $2=value
+  [ -f "$CONFIG" ] || { mkdir -p "$(dirname "$CONFIG")"; : > "$CONFIG"; }
+  python3 - "$CONFIG" "$1" "$2" <<'PY'
+import re, sys
+path, key, value = sys.argv[1:4]
+txt = open(path).read()
+# This file is sourced — by the bash bars, and now by this script too — so a
+# value is not merely text, it is shell code. Escaping just " and \\ left $(…)
+# and backticks live, and they would run every time any bar read the config.
+# $HOME is spared on purpose so stored paths stay portable between machines.
+def quote(v):
+    out = v.replace("\\", "\\\\").replace('"', '\\"').replace("`", "\\`")
+    return re.sub(r'\$(?!HOME\b)', r'\\$', out)
+line = '%s="%s"' % (key, quote(value))
+pat = re.compile(r'^%s=.*$' % re.escape(key), re.M)
+txt = pat.sub(lambda _: line, txt, count=1) if pat.search(txt) else txt.rstrip() + "\n" + line + "\n"
+open(path, "w").write(txt)
+PY
+}
+
+# Without a terminal (terminal=false) there is no stdin: do not block.
+pause() {
+  [[ -t 0 ]] || return 0
+  echo; read -r -p "Press Enter to close… " _
+}
+
+# Up to 15 s can pass between SwiftBar drawing the menu and you clicking the
+# item. If the process died on its own and the system recycled the number,
+# killing blindly by PID takes down an innocent process.
+#
+# The executable name alone does not settle it — every JVM on the machine is
+# called `java`, so a recycled PID running any other service passed the old
+# check. The menu therefore records name *and* start time, and both have to
+# match. Compared in lowercase: the python in /usr/bin is called "Python".
+#
+# $1=pid  $2=expected name  $3=expected start time (ps lstart)
+verify_id() {
+  local pid="$1" want_comm="$2" want_start="$3" comm start
+  [[ -z "$want_comm" ]] && return 1
+  comm="$(ps -p "$pid" -o comm= 2>/dev/null)" || return 1
+  [[ -z "$comm" ]] && return 1
+  [[ "$(printf '%s' "${comm##*/}" | tr '[:upper:]' '[:lower:]')" \
+     == "$(printf '%s' "$want_comm" | tr '[:upper:]' '[:lower:]')" ]] || return 1
+  # Fail closed. This used to accept "the name matched, good enough", which is
+  # no identity at all — every JVM is java and every virtualenv is python, so a
+  # recycled PID walked straight through. And it was reachable from a freshly
+  # drawn menu, not only a stale one: if a process dies between listing the
+  # ports and reading the start times, its entry ships without one.
+  [[ -z "$want_start" ]] && return 1
+  start="$(ps -p "$pid" -o lstart= 2>/dev/null)"
+  [[ "$(norm_ws "$start")" == "$(norm_ws "$want_start")" ]]
+}
+
+# Decodes the identity the menu shipped in param3 into COMM and START.
+decode_id() {   # $1=base64 of "comm<TAB>start"
+  local raw
+  raw="$(unb64 "$1")"
+  COMM="${raw%%$'\t'*}"
+  START="${raw#*$'\t'}"
+  [[ "$START" == "$COMM" ]] && START=""
+}
+
+# Waits for the process to disappear. Returns 1 if it is still alive at the end.
+wait_for_death() {   # $1=pid  $2=tenths of a second
+  local pid="$1" n="$2" i=0
+  while (( i < n )); do
+    kill -0 "$pid" 2>/dev/null || return 0
+    sleep 0.1
+    (( i++ ))
+  done
+  return 1
+}
+
+case "$VERB" in
+  # SIGTERM: lets the service close its connections and free the port.
+  kill)
+    decode_id "$EXPECTED"
+    # Say so rather than exiting quietly: a Kill that does nothing and reports
+    # nothing is indistinguishable from one that worked.
+    verify_id "$ARG" "$COMM" "$START" || {
+      notify "Not killed" "PID $ARG is no longer that process. Refresh the menu."
+      exit 0
+    }
+    kill -TERM "$ARG" 2>/dev/null
+    if wait_for_death "$ARG" 30; then
+      notify "Killed" "${COMM:-PID $ARG} stopped."
+    else
+      notify "Still running" "PID $ARG ignored SIGTERM. Use Force."
+    fi
+    ;;
+
+  # SIGKILL: for whatever ignores SIGTERM. No orderly shutdown.
+  force)
+    decode_id "$EXPECTED"
+    verify_id "$ARG" "$COMM" "$START" || {
+      notify "Not killed" "PID $ARG is no longer that process. Refresh the menu."
+      exit 0
+    }
+    kill -KILL "$ARG" 2>/dev/null
+    wait_for_death "$ARG" 20
+    ;;
+
+  # Several at once. In a terminal, because it helps to see what fell and what
+  # did not. Each line carries its own identity and is verified exactly like a
+  # single Kill — this used to fire SIGTERM at every PID with no check at all,
+  # so one recycled number was enough to take down an unrelated process.
+  killall)
+    ROWS="$(unb64 "$ARG")"
+    TOTAL=0; KILLED=0; SKIPPED=0; ALIVE=0
+    while IFS=$'\t' read -r pid comm start; do
+      [[ -z "$pid" ]] && continue
+      TOTAL=$((TOTAL + 1))
+    done <<< "$ROWS"
+
+    if (( TOTAL == 0 )); then
+      echo "No processes to kill."
+      pause
+      exit 0
+    fi
+
+    echo "Sending SIGTERM to $TOTAL process(es)…"
+    echo
+    while IFS=$'\t' read -r pid comm start; do
+      [[ -z "$pid" ]] && continue
+      if ! verify_id "$pid" "$comm" "$start"; then
+        printf '  %-8s skipped, no longer %s\n' "$pid" "${comm:-that process}"
+        SKIPPED=$((SKIPPED + 1))
+        continue
+      fi
+      kill -TERM "$pid" 2>/dev/null
+      if wait_for_death "$pid" 30; then
+        printf '  %-8s terminated (%s)\n' "$pid" "$comm"
+        KILLED=$((KILLED + 1))
+      else
+        printf '  %-8s STILL ALIVE, use Force (%s)\n' "$pid" "$comm"
+        ALIVE=$((ALIVE + 1))
+      fi
+    done <<< "$ROWS"
+
+    echo
+    printf '%s terminated, %s skipped, %s still alive.\n' "$KILLED" "$SKIPPED" "$ALIVE"
+    if (( ALIVE > 0 )); then
+      echo
+      echo "Use \"Force kill survivors\" in the menu for the ones still running."
+    fi
+    pause
+    ;;
+
+  # SIGKILL for everything that survived a Kill all. The batch used to say
+  # "STILL ALIVE, use Force" and leave you to hunt each survivor by hand.
+  forceall)
+    ROWS="$(unb64 "$ARG")"
+    ALIVE=""; N=0
+    while IFS=$'\t' read -r pid comm start; do
+      [[ -z "$pid" ]] && continue
+      verify_id "$pid" "$comm" "$start" || continue
+      ALIVE="$ALIVE  · $pid  $comm"$'\n'; N=$((N + 1))
+    done <<< "$ROWS"
+    if (( N == 0 )); then
+      echo "Nothing left running."
+      pause; exit 0
+    fi
+    # No orderly shutdown: connections drop, buffers are not flushed, and
+    # anything mid-write can be left half-written. Worth asking about.
+    confirm "Force kill $N process(es)?" \
+"SIGKILL, so they get no chance to shut down cleanly:
+
+$ALIVE
+Unsaved work in them is lost." || { echo "Cancelled."; pause; exit 0; }
+    while IFS=$'\t' read -r pid comm start; do
+      [[ -z "$pid" ]] && continue
+      verify_id "$pid" "$comm" "$start" || { printf '  %-8s skipped, no longer %s\n' "$pid" "$comm"; continue; }
+      kill -KILL "$pid" 2>/dev/null
+      if wait_for_death "$pid" 20; then
+        printf '  %-8s killed (%s)\n' "$pid" "$comm"
+      else
+        printf '  %-8s WILL NOT DIE (%s)\n' "$pid" "$comm"
+      fi
+    done <<< "$ROWS"
+    pause
+    ;;
+
+  # What is holding the port now that the kill was refused.
+  whoport)
+    echo "Listening on port $ARG:"
+    echo
+    /usr/sbin/lsof -nP -iTCP:"$ARG" -sTCP:LISTEN 2>/dev/null || echo "  nothing"
+    pause
+    ;;
+
+  # Opens the service's project directory in the configured IDE.
+  openide)
+    DIR="$(unb64 "$ARG")"
+    [ -d "$DIR" ] || { notify "Cannot open" "$DIR no longer exists."; exit 0; }
+    IDE="${REPOS_IDE:-}"
+    if [ -n "${REPOS_IDE_CMD:-}" ]; then
+      "$REPOS_IDE_CMD" "$DIR" >/dev/null 2>&1 &
+    elif [ -n "$IDE" ]; then
+      open -a "$IDE" "$DIR" >/dev/null 2>&1 || open "$DIR"
+    else
+      open "$DIR"
+    fi
+    ;;
+
+  # Clipboard helpers.
+  copy)
+    printf '%s' "$(unb64 "$ARG")" | pbcopy
+    notify "Copied" "$(unb64 "$ARG")"
+    ;;
+
+  # ---- settings, driven from the menu
+  set)
+    set_config "$ARG" "$EXPECTED"
+    notify "Settings" "$ARG = ${EXPECTED:-(empty)}"
+    ;;
+
+  openconfig)
+    [ -f "$CONFIG" ] || { mkdir -p "$(dirname "$CONFIG")"; : > "$CONFIG"; }
+    open -e "$CONFIG"
+    ;;
+
+  *)
+    echo "Unknown verb: $VERB" >&2
+    exit 1
+    ;;
+esac

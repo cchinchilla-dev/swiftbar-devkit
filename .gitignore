@@ -1,0 +1,15 @@
+# Your real settings. Holds paths and, quite possibly, an internal registry
+# hostname. config.example.sh is the one that gets versioned.
+config.sh
+
+# Fixture repositories, rebuilt from scratch by test/fixtures.sh on every run.
+test/repos/
+
+# The test suite imports the ports bar as a module, which leaves these behind.
+__pycache__/
+*.pyc
+
+.DS_Store
+*.bak
+*.bak.*
+test/repos-branches/
