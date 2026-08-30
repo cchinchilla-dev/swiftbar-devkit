@@ -34,8 +34,6 @@ screen instead, with the fix one click away.
 - **Colima** — the container VM and everything inside it
 - **llama-swap** — the local model server, and what it is costing you
 
-Every menu, including the ones not shown here, is in [`docs/screenshots`](docs/screenshots).
-
 Bash and the Python macOS ships with: nothing from npm, no daemon of its own, no
 telemetry, one config file. The installer asks which bars you want — one, some
 or all — and offers their dependencies (`colima`, `llama-swap`, `llama.cpp`,
@@ -49,6 +47,9 @@ fix whatever is wrong.
 <p align="center">
   <img src="docs/screenshots/repos-list.png" alt="The Repos menu listing repositories with their state" width="232">
 </p>
+
+A repository opened — its stashes, its branches and the commands that fix it —
+is in [`docs/screenshots`](docs/screenshots).
 
 - **Branches** local and remote: switch between them, or clear out the ones
   whose remote is gone. A dirty tree is offered a stash first.
