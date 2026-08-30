@@ -34,7 +34,7 @@ screen instead, with the fix one click away.
 - **Colima** — the container VM and everything inside it
 - **llama-swap** — the local model server, and what it is costing you
 
-Screenshots of each menu are in [`docs/screenshots`](docs/screenshots).
+Every menu, including the ones not shown here, is in [`docs/screenshots`](docs/screenshots).
 
 Bash and the Python macOS ships with: nothing from npm, no daemon of its own, no
 telemetry, one config file. The installer asks which bars you want — one, some
@@ -46,6 +46,9 @@ or all — and offers their dependencies (`colima`, `llama-swap`, `llama.cpp`,
 Every repository under your roots, grouped by folder, with the exact commands to
 fix whatever is wrong.
 
+<p align="center">
+  <img src="docs/screenshots/repos-list.png" alt="The Repos menu listing repositories with their state" width="232">
+</p>
 
 - **Branches** local and remote: switch between them, or clear out the ones
   whose remote is gone. A dirty tree is offered a stash first.
@@ -64,6 +67,9 @@ fix whatever is wrong.
 The services holding local ports — and only yours; editors, language servers and
 system daemons are filtered out.
 
+<p align="center">
+  <img src="docs/screenshots/devports.png" alt="The Dev ports menu listing services by project name" width="508">
+</p>
 
 - **Named after the project**, not the file, because entry points tend to all be
   called `main.py`.
@@ -81,6 +87,9 @@ system daemons are filtered out.
 The container VM and everything in it, for
 [Colima](https://github.com/abiosoft/colima) instead of Docker Desktop.
 
+<p align="center">
+  <img src="docs/screenshots/colima.png" alt="The Colima menu showing the VM and its containers" width="204">
+</p>
 
 - **Containers** with status, logs, a shell, clickable ports and the ID on the
   clipboard. Removing one asks first.
@@ -97,6 +106,9 @@ The local model server, for [llama-swap](https://github.com/mostlygeek/llama-swa
 in front of [llama.cpp](https://github.com/ggml-org/llama.cpp). You need both —
 llama-swap installs happily without llama.cpp, and then every load fails.
 
+<p align="center">
+  <img src="docs/screenshots/llama.png" alt="The llama-swap menu showing the loaded model" width="276">
+</p>
 
 - **Which model is loaded**, named in the menu bar itself.
 - **Load, unload or switch** — with an exclusive group, loading *is* switching.
