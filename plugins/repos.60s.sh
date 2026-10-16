@@ -158,33 +158,27 @@ strip_comment() {
   printf '%s' "$1" | sed -E 's/^[[:space:]]*#.*$//; s/[[:space:]]+#.*$//; s/[[:space:]]+$//'
 }
 
-# Rewrites one key in config.sh in place, so the settings menu can edit it.
-# python3 rather than sed because REPOS_ROOTS is a multi-line array.
+# The checkout this script lives in. Installed it is a symlink, in ~/.swiftbar
+# or ~/.local/bin, and what the scripts share stays in the repository's lib/.
+kit_dir() {
+  local s="$0" l
+  while [ -L "$s" ]; do
+    l="$(readlink "$s")"
+    case "$l" in
+      /*) s="$l" ;;
+      *)  case "$s" in */*) s="${s%/*}/$l" ;; *) s="$l" ;; esac ;;
+    esac
+  done
+  case "$s" in */*) s="${s%/*}" ;; *) s="." ;; esac
+  (cd "$s/.." 2>/dev/null && pwd)
+}
+
+# Every write to config.sh goes through lib/setconfig.py, which escapes the
+# value and replaces the file in one rename.
 set_config() {   # $1=key, or key[] for the array  rest=value(s)
-  local key="$1"; shift
-  [ -f "$CONFIG" ] || { mkdir -p "$(dirname "$CONFIG")"; : > "$CONFIG"; }
-  python3 - "$CONFIG" "$key" "$@" <<'PY'
-import re, sys
-path, key, values = sys.argv[1], sys.argv[2], sys.argv[3:]
-
-# Every bar sources this file, so a value is shell code: "Add a folder…" with
-# ~/Client $work stored the path raw, and the next render expanded $work to
-# nothing. $HOME is spared so stored paths stay portable.
-def quote(v):
-    out = v.replace("\\", "\\\\").replace('"', '\\"').replace("`", "\\`")
-    return re.sub(r'\$(?!HOME\b)', r'\\$', out)
-
-txt = open(path).read()
-if key.endswith("[]"):
-    key = key[:-2]
-    block = key + "=(\n" + "".join('  "%s"\n' % quote(v) for v in values) + ")"
-    pat = re.compile(r'^%s=\(.*?^\)' % re.escape(key), re.M | re.S)
-else:
-    block = '%s="%s"' % (key, quote(values[0]))
-    pat = re.compile(r'^%s=.*$' % re.escape(key), re.M)
-txt = pat.sub(lambda _: block, txt, count=1) if pat.search(txt) else txt.rstrip() + "\n" + block + "\n"
-open(path, "w").write(txt)
-PY
+  local kit; kit="$(kit_dir)"
+  [ -f "$kit/lib/setconfig.py" ] || fail "Settings" "lib/setconfig.py is not next to this script. Install with install.sh, which links the bars rather than copying them."
+  python3 "$kit/lib/setconfig.py" "$CONFIG" "$@"
 }
 
 # Paths under the home directory are stored as $HOME/... so the file still

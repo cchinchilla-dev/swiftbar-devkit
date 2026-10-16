@@ -293,6 +293,23 @@ SWIFTBAR_CONFIG="$CFG" bash "$S/../bin/colimabar-action" set COLIMA_X "\`touch $
 READBACK="$(bash -c '. "$1"; printf "%s\n" "${REPOS_ROOTS[@]}"' _ "$CFG")"
 has    "a \$ in a folder name survives"        "$READBACK" "Client \$work"
 equals "neither \$(…) nor backticks run"      "$([ -e "$T/.pwned" ] && echo ran || echo stored)" "stored"
+# One writer, lib/setconfig.py, behind every bar's Settings: there were five
+# copies, and two of them wrote values raw. Same value, same file, from all.
+V='a $b `c` "d" \e $HOME/x'
+for who in "$P" "$S/../bin/devports-action" "$S/../bin/llamabar-action" "$S/../bin/colimabar-action"; do
+  : > "$T/.cfg-one.sh"
+  SWIFTBAR_CONFIG="$T/.cfg-one.sh" bash "$who" set SOME_KEY "$V" >/dev/null 2>&1
+  cat "$T/.cfg-one.sh"
+done > "$T/.cfg-all"
+equals "every bar writes the same line"        "$(sort -u "$T/.cfg-all" | grep -c .)" "1"
+equals "and it reads back as written"          "$(bash -c '. "$1"; printf %s "$SOME_KEY"' _ "$T/.cfg-one.sh")" "${V/\$HOME/$HOME}"
+# A config kept in a dotfiles repo is a symlink, and must stay one.
+echo 'OTHER="1"' > "$T/.cfg-real.sh"; ln -sfn "$T/.cfg-real.sh" "$T/.cfg-link.sh"
+SWIFTBAR_CONFIG="$T/.cfg-link.sh" bash "$P" set SOME_KEY v >/dev/null 2>&1
+equals "a symlinked config stays a symlink"   "$([ -L "$T/.cfg-link.sh" ] && grep -c SOME_KEY "$T/.cfg-real.sh")" "1"
+# The key arrives as a menu parameter: it is not allowed to be shell.
+python3 "$S/../lib/setconfig.py" "$T/.cfg-bad.sh" 'X; touch pwned' v >/dev/null 2>&1
+equals "a key that is not a name is refused"  "$([ -e "$T/.cfg-bad.sh" ] && echo written || echo refused)" "refused"
 
 echo
 echo "── A | IN FREE TEXT ──────────────────────────────────"

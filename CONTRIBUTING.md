@@ -53,6 +53,9 @@ Four files, following any existing bar as the model:
 - `test/tests-<name>.sh` — states reached through stubbed binaries
 - an entry in `install.sh`'s `BAR_*` tables, and its keys in `config.example.sh`
 
+Settings it writes go through `lib/setconfig.py`, never a copy of its own: the
+config is sourced by every bar, so how a value is escaped is not a local choice.
+
 Keep the render cheap: these run every few seconds, forever.
 
 ## Reporting a bug

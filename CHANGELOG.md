@@ -11,6 +11,12 @@
   (`REPOS_PR_MINUTES`). Failing checks mark the row and count as pending.
 - **CPU, memory and uptime** for every service in the Dev ports bar.
 
+### Changed
+- Every write to `config.sh` — the four bars' Settings and the installer — goes
+  through one writer, `lib/setconfig.py`, instead of five copies. It replaces
+  the file in one rename, keeps a symlinked config a symlink, and refuses a key
+  that is not a plain variable name.
+
 ### Fixed
 - **Run them in Terminal** ran each suggested line on Return, as written: a
   commit with `"..."` as its message, and `--abort` straight after a

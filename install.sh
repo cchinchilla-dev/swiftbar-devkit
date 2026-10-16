@@ -89,32 +89,10 @@ fi
 
 # -------------------------------------------------------------- config edits
 
-# Rewrites one key in config.sh in place. python3 rather than sed because
-# REPOS_ROOTS is a multi-line array, which sed handles badly. Values are
-# escaped: config.sh is sourced by every bar every few seconds, so an
-# unescaped $(…) in a path would re-execute forever.
-set_config() {   # $1=key  $2=value, or for arrays: $2.. = the entries
-  local key="$1"; shift
-  python3 - "$CONFIG" "$key" "$@" <<'PY'
-import re, sys
-path, key, values = sys.argv[1], sys.argv[2], sys.argv[3:]
-
-def quote(v):
-    # $HOME is meant to survive; anything else that the shell would act on is not.
-    out = v.replace("\\", "\\\\").replace('"', '\\"').replace("`", "\\`")
-    return re.sub(r'\$(?!HOME\b)', r'\\$', out)
-
-txt = open(path).read()
-if key.endswith("[]"):
-    key = key[:-2]
-    block = key + "=(\n" + "".join('  "%s"\n' % quote(v) for v in values) + ")"
-    pat = re.compile(r'^%s=\(.*?^\)' % re.escape(key), re.M | re.S)
-else:
-    block = '%s="%s"' % (key, quote(values[0]))
-    pat = re.compile(r'^%s=.*$' % re.escape(key), re.M)
-txt = pat.sub(lambda _: block, txt, count=1) if pat.search(txt) else txt.rstrip() + "\n" + block + "\n"
-open(path, "w").write(txt)
-PY
+# Every write to config.sh goes through lib/setconfig.py, the same writer the
+# bars use: it escapes the value, since every bar sources this file.
+set_config() {   # $1=key, or key[] for the array  rest=value(s)
+  python3 "$REPO/lib/setconfig.py" "$CONFIG" "$@"
 }
 
 # Writes paths under the home directory as $HOME/... so the file survives being

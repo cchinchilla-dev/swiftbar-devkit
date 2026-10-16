@@ -46,25 +46,27 @@ display alert "$(as_quote "$1")" message "$(as_quote "$2")" as critical buttons 
 AS
 }
 
-# Rewrites one key so the settings menu can edit it without a text editor.
+# The checkout this script lives in. Installed it is a symlink, in ~/.swiftbar
+# or ~/.local/bin, and what the scripts share stays in the repository's lib/.
+kit_dir() {
+  local s="$0" l
+  while [ -L "$s" ]; do
+    l="$(readlink "$s")"
+    case "$l" in
+      /*) s="$l" ;;
+      *)  case "$s" in */*) s="${s%/*}/$l" ;; *) s="$l" ;; esac ;;
+    esac
+  done
+  case "$s" in */*) s="${s%/*}" ;; *) s="." ;; esac
+  (cd "$s/.." 2>/dev/null && pwd)
+}
+
+# Every write to config.sh goes through lib/setconfig.py, which escapes the
+# value and replaces the file in one rename.
 set_config() {   # $1=key  $2=value
-  [ -f "$CONFIG" ] || { mkdir -p "$(dirname "$CONFIG")"; : > "$CONFIG"; }
-  python3 - "$CONFIG" "$1" "$2" <<'PY'
-import re, sys
-path, key, value = sys.argv[1:4]
-txt = open(path).read()
-# This file is sourced — by the bash bars, and now by this script too — so a
-# value is not merely text, it is shell code. Escaping just " and \\ left $(…)
-# and backticks live, and they would run every time any bar read the config.
-# $HOME is spared on purpose so stored paths stay portable between machines.
-def quote(v):
-    out = v.replace("\\", "\\\\").replace('"', '\\"').replace("`", "\\`")
-    return re.sub(r'\$(?!HOME\b)', r'\\$', out)
-line = '%s="%s"' % (key, quote(value))
-pat = re.compile(r'^%s=.*$' % re.escape(key), re.M)
-txt = pat.sub(lambda _: line, txt, count=1) if pat.search(txt) else txt.rstrip() + "\n" + line + "\n"
-open(path, "w").write(txt)
-PY
+  local kit; kit="$(kit_dir)"
+  [ -f "$kit/lib/setconfig.py" ] || { notify "Settings" "lib/setconfig.py is not next to this script. Install with install.sh, which links the bars rather than copying them."; return 1; }
+  python3 "$kit/lib/setconfig.py" "$CONFIG" "$1" "$2"
 }
 
 # Without a terminal (terminal=false) there is no stdin: do not block.
@@ -259,7 +261,7 @@ Unsaved work in them is lost." || { echo "Cancelled."; pause; exit 0; }
 
   # ---- settings, driven from the menu
   set)
-    set_config "$ARG" "$EXPECTED"
+    set_config "$ARG" "$EXPECTED" || exit 1
     notify "Settings" "$ARG = ${EXPECTED:-(empty)}"
     ;;
 

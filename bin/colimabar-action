@@ -76,6 +76,21 @@ in_terminal() {
   return 0
 }
 
+# The checkout this script lives in. Installed it is a symlink, in ~/.swiftbar
+# or ~/.local/bin, and what the scripts share stays in the repository's lib/.
+kit_dir() {
+  local s="$0" l
+  while [ -L "$s" ]; do
+    l="$(readlink "$s")"
+    case "$l" in
+      /*) s="$l" ;;
+      *)  case "$s" in */*) s="${s%/*}/$l" ;; *) s="$l" ;; esac ;;
+    esac
+  done
+  case "$s" in */*) s="${s%/*}" ;; *) s="." ;; esac
+  (cd "$s/.." 2>/dev/null && pwd)
+}
+
 case "${1:-}" in
   logs|exec|stats|shell|prune|prune-all|fixcreds|lazy)
     in_terminal "$@" && exit 0
@@ -231,21 +246,9 @@ PY
 
   # ---- settings, driven from the menu
   set)
-    [ -f "$CONFIG" ] || { mkdir -p "$(dirname "$CONFIG")"; : > "$CONFIG"; }
-    python3 - "$CONFIG" "$ARG" "${3:-}" <<'PYEOF'
-import re, sys
-path, key, value = sys.argv[1:4]
-txt = open(path).read()
-# This file is sourced by every bar, so a value is shell code, not just text.
-# $HOME is spared on purpose so stored paths stay portable between machines.
-def quote(v):
-    out = v.replace("\\", "\\\\").replace('"', '\\"').replace("`", "\\`")
-    return re.sub(r'\$(?!HOME\b)', r'\\$', out)
-line = '%s="%s"' % (key, quote(value))
-pat = re.compile(r'^%s=.*$' % re.escape(key), re.M)
-txt = pat.sub(lambda _: line, txt, count=1) if pat.search(txt) else txt.rstrip() + "\n" + line + "\n"
-open(path, "w").write(txt)
-PYEOF
+    kit="$(kit_dir)"
+    [ -f "$kit/lib/setconfig.py" ] || { notify "Settings" "lib/setconfig.py is not next to this script. Install with install.sh, which links the bars rather than copying them."; exit 1; }
+    python3 "$kit/lib/setconfig.py" "$CONFIG" "$ARG" "${3:-}" || exit 1
     osascript -e "display notification \"$ARG = ${3:-}\" with title \"Settings\"" >/dev/null 2>&1
     ;;
 
