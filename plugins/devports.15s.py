@@ -281,17 +281,44 @@ def process_tree():
 
 
 def start_times(pids):
-    """{pid: process start time}. The executable name alone cannot tell two
+    """{pid: (start time, usage)}. The executable name alone cannot tell two
     processes apart — every JVM is `java` — so a recycled PID would pass the
-    kill guard. The start time is what makes the identity unique."""
+    kill guard. The start time is what makes the identity unique.
+
+    Usage rides along in the same ps call: "0.4% CPU · 38 MB · up 2 h". lstart
+    goes last because it is the one column with spaces in it."""
     if not pids:
         return {}
     out = {}
-    for line in run([PS, "-o", "pid=,lstart=", "-p", ",".join(pids)]).splitlines():
-        parts = line.strip().split(None, 1)
-        if len(parts) == 2 and parts[0].isdigit():
-            out[parts[0]] = parts[1].strip()
+    for line in run([PS, "-o", "pid=,%cpu=,rss=,etime=,lstart=", "-p", ",".join(pids)]).splitlines():
+        parts = line.strip().split(None, 4)
+        if len(parts) == 5 and parts[0].isdigit():
+            out[parts[0]] = (parts[4].strip(), usage(parts[1], parts[2], parts[3]))
     return out
+
+
+def usage(cpu, rss_kb, etime):
+    """ps's raw columns, as the submenu shows them."""
+    try:
+        mb = int(rss_kb) / 1024.0
+    except ValueError:
+        return ""
+    mem = "{:.1f} GB".format(mb / 1024) if mb >= 1024 else "{:.0f} MB".format(mb)
+    return "{}% CPU · {} · up {}".format(cpu, mem, uptime(etime))
+
+
+def uptime(etime):
+    """[[dd-]hh:]mm:ss → the same wording as the other bars: 5 min, 3 h, 2 d."""
+    days, _, rest = etime.rpartition("-")
+    fields = [int(f) for f in rest.split(":") if f.isdigit()]
+    while len(fields) < 3:
+        fields.insert(0, 0)
+    h, m = fields[0], fields[1]
+    if days.isdigit():
+        return "{} d".format(int(days))
+    if h:
+        return "{} h".format(h)
+    return "{} min".format(m) if m else "just now"
 
 
 def arguments(pids):
@@ -775,7 +802,8 @@ def main():
             "origin": came_from,
             "cmd": shown,
             "comm": os.path.basename(comm),
-            "start": starts.get(pid, ""),
+            "start": starts.get(pid, ("", ""))[0],
+            "usage": starts.get(pid, ("", ""))[1],
         })
 
     services.sort(key=lambda s: (s["primary"], s["name"]))
@@ -804,6 +832,8 @@ def main():
         if s["origin"]:
             detail += " · {}".format(s["origin"])
         print("--{} | {}".format(clean(detail), MONO))
+        if s["usage"]:
+            print("--{} | {}".format(s["usage"], MONO))
         if s["project"]:
             home = os.path.expanduser("~")
             path = s["project"]

@@ -44,6 +44,14 @@ MAX_FILES="${REPOS_MAX_FILES:-10}"
 # buries the handful that actually need attention.
 ONLY_PENDING="${REPOS_ONLY_PENDING:-0}"
 HIDDEN=0
+# Background rounds, each off with 0: a fetch so behind/ahead stay honest
+# without a click, and the pull request lookup, which talks to GitHub. Neither
+# ever runs inside a render; the menu only reads what they left in CACHE.
+AUTO_FETCH_MIN="${REPOS_AUTO_FETCH_MINUTES:-30}"
+PR_MIN="${REPOS_PR_MINUTES:-5}"
+case "$AUTO_FETCH_MIN" in ''|*[!0-9]*) AUTO_FETCH_MIN=0 ;; esac
+case "$PR_MIN" in ''|*[!0-9]*) PR_MIN=0 ;; esac
+CACHE="${TMPDIR:-/tmp}/reposbar"
 
 # Directories that never hold a repository of yours. Two reasons to skip them:
 # they are enormous, and package caches do contain real checkouts — uv keeps
@@ -296,6 +304,32 @@ dec() {   # $1 = value -> DEC
     b64:*) DEC="$(unb64 "${1#b64:}")" ;;
     *)     DEC="$1" ;;
   esac
+}
+
+# A background round is due when its stamp is missing or older than $2
+# minutes. The stamp is touched as the round starts, so the next render, a
+# minute later, does not start the same one again while it is still running.
+due() {   # $1=stamp name  $2=minutes
+  local s="$CACHE/$1.stamp"
+  [ -n "$(find "$s" -mmin -"$2" 2>/dev/null)" ] && return 1
+  mkdir -p "$CACHE" && touch "$s"
+}
+
+# Redraws this bar once a background round has something new to show.
+redraw() { local n="${SELF##*/}"; open -g "swiftbar://refreshplugin?name=${n%%.*}" >/dev/null 2>&1; }
+
+# The open pull request for a repo's branch, as refresh-prs cached it. Unit
+# separated, not tab: tab is whitespace to read, and an empty review decision
+# would have shifted every field after it. A cache written for another branch
+# is ignored, so switching does not show the old branch's PR for minutes.
+read_pr() {   # $1=repo  $2=branch -> PR_N PR_URL PR_REVIEW PR_CI PR_DRAFT
+  PR_N=""; PR_URL=""; PR_REVIEW=""; PR_CI=""; PR_DRAFT=""
+  local f="$CACHE/pr/${1//\//%}" head=""
+  [ "$PR_MIN" -gt 0 ] && [ -n "$2" ] && [ -s "$f" ] || return 0
+  IFS=$'\037' read -r head PR_N PR_URL PR_REVIEW PR_CI PR_DRAFT < "$f"
+  # Every field, not just the number: a leftover "fail" marked the row of a
+  # branch whose PR this is not.
+  [ "$head" = "$2" ] || { PR_N=""; PR_URL=""; PR_REVIEW=""; PR_CI=""; PR_DRAFT=""; }
 }
 
 # Reads a repo's state into globals.
@@ -616,6 +650,12 @@ settings_menu() {
     echo "--Showing: all repos | bash=\"$SELF\" param1=set param2=REPOS_ONLY_PENDING param3=1 terminal=false refresh=true"
   fi
   echo "--Fetch stale after: ${REPOS_FETCH_STALE_HOURS:-24} h | bash=\"$SELF\" param1=setnum param2=REPOS_FETCH_STALE_HOURS param3=\"Warn when the last fetch is older than, in hours:\" param4=\"${REPOS_FETCH_STALE_HOURS:-24}\" terminal=false refresh=true"
+  local every
+  every="off"; [ "$AUTO_FETCH_MIN" -gt 0 ] && every="every $AUTO_FETCH_MIN min"
+  echo "--Fetch in the background: $every | bash=\"$SELF\" param1=setnum param2=REPOS_AUTO_FETCH_MINUTES param3=\"Fetch every how many minutes? 0 turns it off.\" param4=\"$AUTO_FETCH_MIN\" terminal=false refresh=true"
+  every="off"; [ "$PR_MIN" -gt 0 ] && every="every $PR_MIN min"
+  command -v gh >/dev/null 2>&1 || every="needs gh"
+  echo "--Pull requests: $every | bash=\"$SELF\" param1=setnum param2=REPOS_PR_MINUTES param3=\"Look up pull requests every how many minutes? 0 turns it off.\" param4=\"$PR_MIN\" terminal=false refresh=true"
   echo "-----"
   echo "--git $(git --version 2>/dev/null | awk '{print $3}')  ·  $(command -v git) | $MONO"
 }
@@ -691,6 +731,47 @@ $OUT"
     [ -n "$ERR" ]  && MSG="${MSG}Aborted:$ERR"
     [ -z "$MSG" ]  && MSG="There was nothing to update."
     info "Update all" "$(printf "%b" "$MSG")"
+    exit 0 ;;
+
+  # Started by the render, detached, once the last round is older than
+  # REPOS_AUTO_FETCH_MINUTES. Nothing in here may ask for anything: with no
+  # terminal prompt a remote that wants a password fails, quietly, until the
+  # next round, instead of hanging a process nobody can see.
+  autofetch)
+    unb64 "$2" | tr '|' '\0' \
+      | GIT_TERMINAL_PROMPT=0 xargs -0 -P 8 -I {} sh -c '[ -n "$1" ] || exit 0
+         git -C "$1" fetch --all --prune --quiet >/dev/null 2>&1' _ {}
+    redraw
+    exit 0 ;;
+
+  # The open pull request for each repository's current branch, with its
+  # checks and review, cached for the render to read: gh talks to GitHub,
+  # which is exactly why this never runs inside a render. Only an answer of
+  # "no pull request" clears a cache — a network error keeps the last one.
+  refresh-prs)
+    mkdir -p "$CACHE/pr"
+    JQ='if .state != "OPEN" then "" else
+      ([.statusCheckRollup[]? | (.conclusion // .state // "") | ascii_upcase]) as $c
+      | [.headRefName, .number, .url, (.reviewDecision // ""),
+         (if ($c | length) == 0 then ""
+          elif any($c[]; . == "FAILURE" or . == "ERROR" or . == "CANCELLED" or . == "TIMED_OUT"
+                         or . == "ACTION_REQUIRED" or . == "STARTUP_FAILURE") then "fail"
+          elif all($c[]; . == "SUCCESS" or . == "NEUTRAL" or . == "SKIPPED") then "pass"
+          else "pending" end),
+         (if .isDraft then "draft" else "" end)]
+      | map(tostring) | join("\u001f") end'
+    unb64 "$2" | tr '|' '\0' \
+      | GH_PROMPT_DISABLED=1 xargs -0 -P 4 -I {} sh -c '[ -n "$1" ] && cd "$1" 2>/dev/null || exit 0
+         out="$2/pr/$(printf %s "$1" | tr / %)"
+         err="$(gh pr view --json state,headRefName,number,url,reviewDecision,statusCheckRollup,isDraft \
+                  --jq "$3" 2>&1 >"$out.tmp")"
+         # A closed or merged PR comes back as an empty line, not as nothing.
+         if [ $? -eq 0 ] && grep -q . "$out.tmp"; then mv "$out.tmp" "$out"
+         else
+           rm -f "$out.tmp"
+           case "$err" in *"no pull requests found"*|*"not a git repository"*|*"none of the git remotes"*|"") rm -f "$out" ;; esac
+         fi' _ {} "$CACHE" "$JQ"
+    redraw
     exit 0 ;;
 
   fetch-all)
@@ -1185,7 +1266,8 @@ fi
 
 SEP=$'\037'
 DATA=(); ALL_PATHS=""; PENDING=0; W_NAME=0; W_BRANCH=0
-N_BEHIND=0; N_AHEAD=0; N_DIRTY=0; N_WARN=0; N_STASH=0; N_BUSY=0
+N_BEHIND=0; N_AHEAD=0; N_DIRTY=0; N_WARN=0; N_STASH=0; N_BUSY=0; N_CI=0
+STALE=""; ON_BRANCH=""
 
 # A flat "root<SEP>repo" list, walking each root separately so the group can be
 # computed relative to its own root.
@@ -1258,6 +1340,13 @@ while IFS="$SEP" read -r RPATH RLABEL R; do
   [ -n "$RLABEL" ] && GROUP="$RLABEL / $GROUP"
 
   read_state "$R"
+  read_pr "$R" "$BRANCH"
+  # What the background rounds will look at: tracked repos whose last fetch is
+  # older than the interval, and every repo that is on a branch.
+  if [ -n "$UP" ] && { [ -z "$FETCH_AGE" ] || [ "$FETCH_AGE" -ge $((AUTO_FETCH_MIN * 60)) ]; }; then
+    STALE="$STALE|$R"
+  fi
+  [ -n "$BRANCH" ] && ON_BRANCH="$ON_BRANCH|$R"
 
   [ "$BEHIND" -gt 0 ] && N_BEHIND=$((N_BEHIND + 1))
   [ "$AHEAD"  -gt 0 ] && N_AHEAD=$((N_AHEAD + 1))
@@ -1265,8 +1354,10 @@ while IFS="$SEP" read -r RPATH RLABEL R; do
   [ -n "$WARN" ]      && N_WARN=$((N_WARN + 1))
   [ "$STASH"  -gt 0 ] && N_STASH=$((N_STASH + 1))
   [ -n "$INPROGRESS" ] && N_BUSY=$((N_BUSY + 1))
+  [ "$PR_CI" = "fail" ] && N_CI=$((N_CI + 1))
   # Stashes do not count towards PENDING: stashing can be deliberate.
-  if [ "$BEHIND" -gt 0 ] || [ "$AHEAD" -gt 0 ] || [ "$DIRTY" -gt 0 ] || [ -n "$WARN" ]; then
+  if [ "$BEHIND" -gt 0 ] || [ "$AHEAD" -gt 0 ] || [ "$DIRTY" -gt 0 ] || [ -n "$WARN" ] \
+     || [ "$PR_CI" = "fail" ]; then
     PENDING=$((PENDING + 1))
   fi
 
@@ -1276,6 +1367,18 @@ while IFS="$SEP" read -r RPATH RLABEL R; do
 
   DATA+=("$GROUP$SEP$NAME$SEP$SHOWN$SEP$BEHIND$SEP$AHEAD$SEP$DIRTY$SEP$WARN$SEP$R$SEP$BRANCH$SEP$UP$SEP$STASH$SEP$INPROGRESS$SEP$CONFLICTS$SEP$COMMONDIR$SEP$REMOTE$SEP$FETCH_AGE$SEP$UPGONE$SEP$BROKEN")
 done <<< "$LIST"
+
+# Background rounds, detached so the menu never waits on the network, at most
+# one per interval. Never in the test suite: a fetch landing in the middle of
+# it would move the fixtures under its feet.
+if [ -z "$REPOS_TEST" ]; then
+  if [ "$AUTO_FETCH_MIN" -gt 0 ] && [ -n "$STALE" ] && due autofetch "$AUTO_FETCH_MIN"; then
+    ( "$SELF" autofetch "$(b64 "$STALE")" >/dev/null 2>&1 & )
+  fi
+  if [ "$PR_MIN" -gt 0 ] && [ -n "$ON_BRANCH" ] && command -v gh >/dev/null 2>&1 && due prs "$PR_MIN"; then
+    ( "$SELF" refresh-prs "$(b64 "$ON_BRANCH")" >/dev/null 2>&1 & )
+  fi
+fi
 
 # ------------------------------------------------------------------ menu bar
 
@@ -1295,6 +1398,7 @@ SUM=""
 [ "$N_WARN"   -gt 0 ] && SUM="$SUM   ! $N_WARN with warnings"
 [ "$N_STASH"  -gt 0 ] && SUM="$SUM   ⚑ $N_STASH with stash"
 [ "$N_BUSY"   -gt 0 ] && SUM="$SUM   ⚠ $N_BUSY mid-operation"
+[ "$N_CI"     -gt 0 ] && SUM="$SUM   ✗ $N_CI failing checks"
 if [ -n "$SUM" ]; then
   echo "${SUM# } | $MONO"
 else
@@ -1325,10 +1429,12 @@ for ROW in "${DATA[@]}"; do
   GROUP="${GROUP//|/¦}"; NAME="${NAME//|/¦}"; SHOWN="${SHOWN//|/¦}"; WARN="${WARN//|/¦}"
   BRANCH="$9"; UP="${10}"; STASH="${11:-0}"; INPROGRESS="${12:-}"; CONFLICTS="${13:-0}"; COMMONDIR="${14:-}"; REMOTE="${15:-origin}"; FETCH_AGE="${16:-}"; UPGONE="${17:-}"; BROKEN="${18:-}"
 
+  read_pr "$R" "$BRANCH"
+
   # A stash counts here even though it does not count towards PENDING: hiding
   # a repository that is holding stashed work would be losing sight of it.
   if [ "$ONLY_PENDING" = "1" ] && [ "$BEHIND" -eq 0 ] && [ "$AHEAD" -eq 0 ] \
-     && [ "$DIRTY" -eq 0 ] && [ -z "$WARN" ] && [ "$STASH" -eq 0 ]; then
+     && [ "$DIRTY" -eq 0 ] && [ -z "$WARN" ] && [ "$STASH" -eq 0 ] && [ "$PR_CI" != "fail" ]; then
     HIDDEN=$((HIDDEN + 1))
     continue
   fi
@@ -1347,6 +1453,7 @@ for ROW in "${DATA[@]}"; do
   [ -n "$WARN" ]      && M="$M !"
   [ "$STASH"  -gt 0 ] && M="$M ⚑$STASH"
   [ -n "$INPROGRESS" ] && M="$M ⚠"
+  [ "$PR_CI" = "fail" ] && M="$M ✗"
 
   printf "  %s   %s  %s | $MONO\n" "$(pad "$NAME" "$W_NAME")" "$(pad "$SHOWN" "$W_BRANCH")" "${M# }"
 
@@ -1357,7 +1464,8 @@ for ROW in "${DATA[@]}"; do
   [ "$AHEAD"  -gt 0 ] && echo "--↑ $(plural "$AHEAD" "commit to push" "commits to push") | $MONO"
   [ "$DIRTY"  -gt 0 ] && echo "--● $(plural "$DIRTY" "file changed" "files changed") | $MONO"
   [ "$STASH"  -gt 0 ] && echo "--⚑ $(plural "$STASH" "stashed change" "stashed changes") | $MONO"
-  if [ "$BEHIND" -eq 0 ] && [ "$AHEAD" -eq 0 ] && [ "$DIRTY" -eq 0 ] && [ -z "$WARN" ] && [ "$STASH" -eq 0 ]; then
+  if [ "$BEHIND" -eq 0 ] && [ "$AHEAD" -eq 0 ] && [ "$DIRTY" -eq 0 ] && [ -z "$WARN" ] && [ "$STASH" -eq 0 ] \
+     && [ "$PR_CI" != "fail" ]; then
     echo "--Up to date | $MONO"
   fi
 
@@ -1371,6 +1479,24 @@ for ROW in "${DATA[@]}"; do
     else
       echo "--↻ fetched $(ago "$FETCH_AGE") | $MONO"
     fi
+  fi
+
+  # The pull request for this branch, as the last background lookup saw it.
+  # Clicking it opens the PR: that is where the failing check is.
+  if [ -n "$PR_N" ]; then
+    PRT="⇅ PR #$PR_N"
+    [ -n "$PR_DRAFT" ] && PRT="$PRT · draft"
+    case "$PR_CI" in
+      fail)    PRT="$PRT · checks failing" ;;
+      pending) PRT="$PRT · checks running" ;;
+      pass)    PRT="$PRT · checks passing" ;;
+    esac
+    case "$PR_REVIEW" in
+      APPROVED)          PRT="$PRT · approved" ;;
+      CHANGES_REQUESTED) PRT="$PRT · changes requested" ;;
+      REVIEW_REQUIRED)   PRT="$PRT · review required" ;;
+    esac
+    echo "--$PRT | href=$PR_URL $MONO"
   fi
 
   # ---- what is actually changed, not just how much

@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Added
+- **Background fetch** in the Repos bar, every 30 minutes by default
+  (`REPOS_AUTO_FETCH_MINUTES`), so behind/ahead stay current without a click.
+  It never asks for a password: a remote that wants one is skipped.
+- **Pull requests** in the Repos bar: the open PR for each branch, with its
+  checks and review, looked up through `gh` every 5 minutes
+  (`REPOS_PR_MINUTES`). Failing checks mark the row and count as pending.
+- **CPU, memory and uptime** for every service in the Dev ports bar.
+
 ### Fixed
 - **Run them in Terminal** ran each suggested line on Return, as written: a
   commit with `"..."` as its message, and `--abort` straight after a

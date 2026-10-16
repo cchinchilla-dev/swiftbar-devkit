@@ -25,7 +25,7 @@ cd swiftbar-devkit && bash install.sh
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/repos-dark.png">
-    <img src="docs/screenshots/repos-light.png" alt="The four bars in the menu bar, with the Repos menu open on a repository that is behind, ahead and has changes" width="828">
+    <img src="docs/screenshots/repos-light.png" alt="The four bars in the menu bar, with the Repos menu open on a branch whose pull request has failing checks" width="750">
   </picture>
 </p>
 
@@ -54,7 +54,7 @@ fix whatever is wrong.
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/stashes-dark.png">
-    <img src="docs/screenshots/stashes-light.png" alt="A repository opened from the Repos menu, showing its stashes and branch actions" width="713">
+    <img src="docs/screenshots/stashes-light.png" alt="A repository opened from the Repos menu, showing its stashes and branch actions" width="815">
   </picture>
 </p>
 
@@ -63,7 +63,11 @@ fix whatever is wrong.
 - **Stashes** listed one by one, each with its own `show` / `apply` / `pop`.
 - **Half-finished rebases, merges and cherry-picks** are detected, and anything
   that would make them worse is hidden.
-- **Fetch all** eight at a time, and hide the repositories that are fine.
+- **Fetched in the background** every half hour, so behind/ahead are current
+  without a click — or **fetch all** yourself, eight at a time.
+- **Pull requests** for the branch you are on, with their checks and review,
+  through `gh`. A failing check marks the row.
+- **Hide the repositories that are fine**, so the rest stand out.
 - **Open in your IDE or on the remote** — a Maven module opens in IntelliJ even
   when PyCharm is what you configured.
 - **Actions guard themselves**: update refuses on a dirty tree, push refuses
@@ -78,13 +82,14 @@ system daemons are filtered out.
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/devports-dark.png">
-    <img src="docs/screenshots/devports-light.png" alt="The Dev ports menu listing services by project name, one of them opened" width="498">
+    <img src="docs/screenshots/devports-light.png" alt="The Dev ports menu listing services by project name, one opened with its CPU, memory and uptime" width="498">
   </picture>
 </p>
 
 - **Named after the project**, not the file, because entry points tend to all be
   called `main.py`.
 - **Java, Python, Node, Bun, Deno, Go.** Debug ports labelled and demoted.
+- **What each one costs**: CPU, memory and how long it has been up.
 - **Open, copy or kill**: the port in a browser, the PID on the clipboard, the
   project in your IDE.
 

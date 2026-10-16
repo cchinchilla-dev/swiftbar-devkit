@@ -51,6 +51,17 @@ REPOS_MAX_FILES=10
 # buried. Toggled from the bar itself. Default: 0
 REPOS_ONLY_PENDING=0
 
+# Fetch every repository in the background once its last fetch is older than
+# this many minutes, so behind/ahead stay honest without a click. Never asks
+# for a password: a remote that wants one is skipped. 0 turns it off.
+# Default: 30
+REPOS_AUTO_FETCH_MINUTES=30
+
+# Look up the pull request for each repository's current branch, with its
+# checks and review, every this many minutes. Needs gh, signed in; runs in the
+# background and the menu reads what it found. 0 turns it off. Default: 5
+REPOS_PR_MINUTES=5
+
 # --- dev ports bar ---------------------------------------------------------
 
 # Reverse-domain prefixes trimmed off project names, comma separated. Useful

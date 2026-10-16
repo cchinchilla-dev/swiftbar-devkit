@@ -110,6 +110,18 @@ equals "an empty start time fails closed" "$(alive $VICTIM)" "yes"
 bash "$ACTION" kill "$VICTIM" "$(printf 'notsleep\tx' | base64)" >/dev/null 2>&1
 equals "a wrong name is refused"          "$(alive $VICTIM)" "yes"
 
+# CPU, memory and uptime now share the plugin's ps call with lstart: the start
+# time it parses out of the wider line must be the one the action compares.
+PLUGIN_IDENT="$(python3 - "$PLUGIN" "$VICTIM" <<'PY'
+import base64, importlib.util, sys
+spec = importlib.util.spec_from_file_location("dp", sys.argv[1])
+m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+start, usage = m.start_times([sys.argv[2]])[sys.argv[2]]
+print(base64.b64encode(("sleep\t" + start).encode()).decode(), "CPU" in usage)
+PY
+)"
+equals "the plugin's start time still matches" "$PLUGIN_IDENT" "$(ident_for $VICTIM) True"
+
 bash "$ACTION" kill "$VICTIM" "$(ident_for $VICTIM)" >/dev/null 2>&1
 equals "the real identity does kill"      "$(alive $VICTIM)" "no"
 

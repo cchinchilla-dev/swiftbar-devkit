@@ -326,6 +326,32 @@ lacks "nor offered branch actions"      "$ORPHAN" "Switch branch"
 rm -rf "$T/group-b/orphan"
 
 echo
+echo "── PULL REQUESTS AND BACKGROUND ROUNDS ───────────────"
+# The render only reads what refresh-prs cached; written by hand here, in the
+# same unit-separated shape, so no test talks to GitHub.
+export TMPDIR="$T/.tmp"; mkdir -p "$TMPDIR/reposbar/pr"
+US=$'\037'; KEY="$(printf '%s' "$T/group-a/clean" | tr / %)"
+# Whatever branch the earlier sections left it on: the cache names its branch.
+B="$(git -C "$T/group-a/clean" branch --show-current)"
+printf '%s%s7%shttps://example.com/pull/7%sCHANGES_REQUESTED%sfail%s\n' "$B" "$US" "$US" "$US" "$US" "$US" \
+  > "$TMPDIR/reposbar/pr/$KEY"
+R="$(bash "$P")"
+has   "a failing PR marks the row"           "$(ROW clean)" "✗"
+has   "and says what failed"                 "$R" "PR #7 · checks failing · changes requested"
+has   "the summary counts it"                "$R" "✗ 1 failing checks"
+# Written for another branch: the PR of the branch you left is not yours now.
+sed -i '' "s|^$B$US|not-$B$US|" "$TMPDIR/reposbar/pr/$KEY"
+R="$(bash "$P")"
+lacks "a cache for another branch is ignored" "$R" "PR #7"
+lacks "and does not mark the row either"      "$(ROW clean)" "✗"
+equals "the suite never starts a round"      "$(ls "$TMPDIR/reposbar" | grep -c stamp)" "0"
+# The round itself: a fetch, with nothing that could ask for a password.
+rm -f "$T/group-a/clean/.git/FETCH_HEAD"
+bash "$P" autofetch "$(printf '%s' "$T/group-a/clean" | base64)" >/dev/null 2>&1
+equals "autofetch fetches"                   "$([ -f "$T/group-a/clean/.git/FETCH_HEAD" ] && echo yes || echo no)" "yes"
+unset TMPDIR
+
+echo
 if [ "$CLIPBOARD" != 1 ]; then
   skip "running the suggested sequences: they read the clipboard"
 else
