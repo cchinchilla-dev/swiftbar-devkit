@@ -267,7 +267,10 @@ wrapper() {   # $1=repo -> the script runfix hands to Terminal
 echo change >> "$T/group-a/dirty/base.txt"
 W="$(wrapper group-a/dirty)"
 lacks "runfix: a placeholder is never run"     "$(echo "$W" | grep '^run ')" '...'
-has   "runfix: it is shown to finish by hand"  "$W" "finish by hand"
+# Run with Return to everything, so every line is skipped: the file itself
+# holds the line %q-escaped, which no plain search would match.
+OUT="$(yes '' | SHELL=/usr/bin/true bash <(echo "$W" | grep -v '^rm -f') 2>&1)"
+has   "runfix: it is shown to finish by hand"  "$OUT" 'finish by hand: git add -A'
 has   "runfix: each line asks first"           "$W" "run it? [y/N]"
 W="$(wrapper group-b/mid-merge)"
 has   "runfix: a failure ends the sequence"    "$W" "the rest was skipped"
