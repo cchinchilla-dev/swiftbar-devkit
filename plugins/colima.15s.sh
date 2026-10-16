@@ -112,7 +112,7 @@ service_and_refresh() {
   if [[ -n "$OPERATION" ]]; then
     echo "$OPERATION | $MONO"
   else
-    echo "Stop the service | bash=$ACTION param1=svcoff param2=$NAME terminal=false refresh=true"
+    echo "Stop the service… | bash=$ACTION param1=svcoff param2=$NAME terminal=false refresh=true"
   fi
   echo "Refresh | refresh=true"
 }
@@ -217,12 +217,15 @@ fi
 # stale icon, just in the opposite quadrant.
 DOCKER_OK=1
 if [[ $RUNNING_VM -eq 1 ]]; then
-  PS_RAW="$(docker ps --format '{{.ID}}|{{.Names}}|{{.Status}}|{{.Image}}|{{.Ports}}' 2>/dev/null)" \
-    || DOCKER_OK=0
   ALL_RAW="$(docker ps -a --format '{{.ID}}|{{.Names}}|{{.Status}}|{{.Image}}|{{.Ports}}' 2>/dev/null)" \
     || DOCKER_OK=0
-  N_UP=0;  [[ -n "$PS_RAW"  ]] && N_UP="$(grep -c . <<< "$PS_RAW")"
-  N_ALL=0; [[ -n "$ALL_RAW" ]] && N_ALL="$(grep -c . <<< "$ALL_RAW")"
+  # Running is what `docker ps` would list, and its Status always starts "Up":
+  # counted from the same listing instead of asking the daemon twice a render.
+  N_UP=0; N_ALL=0
+  while IFS='|' read -r _ _ st _; do
+    [[ -n "$st" ]] || continue
+    N_ALL=$((N_ALL + 1)); [[ "$st" == Up* ]] && N_UP=$((N_UP + 1))
+  done <<< "$ALL_RAW"
   if [[ $DOCKER_OK -eq 0 ]]; then
     # Discarding the exit code made an unreachable daemon look like an empty
     # one: "0 containers", confidently, with a broken context underneath.
@@ -291,8 +294,8 @@ if [[ ${DOCKER_OK:-1} -eq 0 ]]; then
   if [[ -n "$OPERATION" ]]; then
     echo "$OPERATION | $MONO"
   else
-    echo "Restart the VM | bash=$ACTION param1=restart param2=$NAME terminal=false refresh=true"
-    echo "Stop Colima | bash=$ACTION param1=stop param2=$NAME terminal=false refresh=true"
+    echo "Restart the VM… | bash=$ACTION param1=restart param2=$NAME terminal=false refresh=true"
+    echo "Stop Colima… | bash=$ACTION param1=stop param2=$NAME terminal=false refresh=true"
     echo "Shell into the VM | bash=$ACTION param1=shell param2=$NAME terminal=false"
   fi
   settings_menu
@@ -321,8 +324,8 @@ while IFS='|' read -r name status arch cpus mem disk runtime k8s; do
   if [[ -n "$OPERATION" ]]; then
     echo "--$OPERATION | $MONO"
   elif [[ "$status" == "Running" ]]; then
-    echo "--Stop Colima | bash=$ACTION param1=stop param2=$name terminal=false refresh=true"
-    echo "--Restart | bash=$ACTION param1=restart param2=$name terminal=false refresh=true"
+    echo "--Stop Colima… | bash=$ACTION param1=stop param2=$name terminal=false refresh=true"
+    echo "--Restart… | bash=$ACTION param1=restart param2=$name terminal=false refresh=true"
     echo "--Shell into the VM | bash=$ACTION param1=shell param2=$name terminal=false"
   else
     echo "--Start Colima | bash=$ACTION param1=start param2=$name terminal=false refresh=true"
@@ -391,9 +394,9 @@ while IFS='|' read -r id nm st img ports; do
     done <<< "${ports//, /$'\n'}"
   fi
   echo "-----"
-  echo "--Logs | bash=$ACTION param1=logs param2=$id terminal=false"
-  echo "--Shell | bash=$ACTION param1=exec param2=$id terminal=false"
-  echo "--Stats | bash=$ACTION param1=stats param2=$id terminal=false"
+  echo "--Logs | bash=$ACTION param1=logs param2=$id terminal=false sfimage=doc.text"
+  echo "--Shell | bash=$ACTION param1=exec param2=$id terminal=false sfimage=terminal"
+  echo "--Stats | bash=$ACTION param1=stats param2=$id terminal=false sfimage=chart.bar"
   echo "--Copy container ID | bash=$ACTION param1=ccopy param2=$id terminal=false sfimage=doc.on.doc"
   echo "-----"
   if [[ "$st" == Up* ]]; then

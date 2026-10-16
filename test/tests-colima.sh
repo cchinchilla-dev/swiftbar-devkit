@@ -96,4 +96,23 @@ section "THE PROFILE TRAVELS WITH THE ACTION"
 # Every call used to speak to the default instance whatever the menu showed.
 has   "stop carries the profile"          "$R" "param1=stop param2=default"
 
+section "STOPPING THE VM ASKS FIRST"
+# Every container goes down with it. A stubbed osascript records the dialog
+# and answers Cancel, and the stubbed colima records whether it was told to stop.
+cat > "$STUB/osascript" <<EOF
+#!/bin/bash
+grep -q "display alert" <<< "\$(cat)" && echo alert >> "$TMP/asked"
+exit 1
+EOF
+printf '#!/bin/bash\necho "$*" >> "%s"\n' "$TMP/colima-calls" > "$STUB/colima"
+chmod +x "$STUB/osascript" "$STUB/colima"
+ACOPY="$TMP/action-under-test"
+sed "s|^export PATH=\"|export PATH=\"$STUB:|" "$S/../bin/colimabar-action" > "$ACOPY"
+for verb in stop restart svcoff; do
+  : > "$TMP/asked"; : > "$TMP/colima-calls"
+  TMPDIR="$CACHE" bash "$ACOPY" "$verb" default >/dev/null 2>&1
+  equals "$verb asks first"                 "$(grep -c alert "$TMP/asked")" "1"
+  equals "and Cancel leaves the VM alone"   "$(grep -c . "$TMP/colima-calls")" "0"
+done
+
 report "colima"

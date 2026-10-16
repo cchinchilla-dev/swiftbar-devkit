@@ -133,6 +133,10 @@ equals "loading a model asks first"    "$(grep -c alert "$TMP/asked")" "1"
 OUT="$(SWIFTBAR_CONFIG="$CFG" bash "$ACOPY" svcstop 2>&1)"
 equals "stopping the service asks too" "$(grep -c alert "$TMP/asked")" "1"
 
+: > "$TMP/asked"
+OUT="$(SWIFTBAR_CONFIG="$CFG" bash "$ACOPY" svcrestart 2>&1)"
+equals "so does restarting it"         "$(grep -c alert "$TMP/asked")" "1"
+
 # Unloading is cheap and reversible, so it does not interrupt.
 : > "$TMP/asked"
 OUT="$(SWIFTBAR_CONFIG="$CFG" bash "$ACOPY" unload 2>&1)"

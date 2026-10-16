@@ -22,6 +22,13 @@ git clone https://github.com/cchinchilla-dev/swiftbar-devkit.git
 cd swiftbar-devkit && bash install.sh
 ```
 
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/repos-dark.png">
+    <img src="docs/screenshots/repos-light.png" alt="The four bars in the menu bar, with the Repos menu open on a repository that is behind, ahead and has changes" width="828">
+  </picture>
+</p>
+
 
 Thirty repositories and no idea which three are behind. Something still holding
 port 8080, and `lsof` telling you it is `java`. The VM up while `docker ps` says
@@ -45,11 +52,11 @@ Every repository under your roots, grouped by folder, with the exact commands to
 fix whatever is wrong.
 
 <p align="center">
-  <img src="docs/screenshots/repos-list.png" alt="The Repos menu listing repositories with their state" width="232">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/stashes-dark.png">
+    <img src="docs/screenshots/stashes-light.png" alt="A repository opened from the Repos menu, showing its stashes and branch actions" width="713">
+  </picture>
 </p>
-
-A repository opened — its stashes, its branches and the commands that fix it —
-is in [`docs/screenshots`](docs/screenshots).
 
 - **Branches** local and remote: switch between them, or clear out the ones
   whose remote is gone. A dirty tree is offered a stash first.
@@ -69,7 +76,10 @@ The services holding local ports — and only yours; editors, language servers a
 system daemons are filtered out.
 
 <p align="center">
-  <img src="docs/screenshots/devports.png" alt="The Dev ports menu listing services by project name" width="508">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/devports-dark.png">
+    <img src="docs/screenshots/devports-light.png" alt="The Dev ports menu listing services by project name, one of them opened" width="498">
+  </picture>
 </p>
 
 - **Named after the project**, not the file, because entry points tend to all be
@@ -89,7 +99,10 @@ The container VM and everything in it, for
 [Colima](https://github.com/abiosoft/colima) instead of Docker Desktop.
 
 <p align="center">
-  <img src="docs/screenshots/colima.png" alt="The Colima menu showing the VM and its containers" width="204">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/colima-dark.png">
+    <img src="docs/screenshots/colima-light.png" alt="The Colima menu showing the VM and its containers, one of them opened" width="360">
+  </picture>
 </p>
 
 - **Containers** with status, logs, a shell, clickable ports and the ID on the
@@ -108,7 +121,10 @@ in front of [llama.cpp](https://github.com/ggml-org/llama.cpp). You need both �
 llama-swap installs happily without llama.cpp, and then every load fails.
 
 <p align="center">
-  <img src="docs/screenshots/llama.png" alt="The llama-swap menu showing the loaded model" width="276">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/llama-dark.png">
+    <img src="docs/screenshots/llama-light.png" alt="The llama-swap menu with the loaded model and its context window" width="417">
+  </picture>
 </p>
 
 - **Which model is loaded**, named in the menu bar itself.

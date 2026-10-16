@@ -255,6 +255,74 @@ equals "stash: leaves the tree clean" \
        "$(git -C "$T/group-a/dirty" status --porcelain | grep -c .)" "0"
 
 echo
+echo "── RUN IN TERMINAL ───────────────────────────────────"
+# Return used to run each line verbatim: a commit with "..." as its message,
+# and --abort straight after a --continue that stopped on a conflict.
+export REPOS_TEST_OPEN="$T/.opened"
+wrapper() {   # $1=repo -> the script runfix hands to Terminal
+  : > "$REPOS_TEST_OPEN"
+  bash "$P" runfix "$T/$1" >/dev/null 2>&1
+  cat "$(sed -n 's/^OPEN|-a Terminal //p' "$REPOS_TEST_OPEN")" 2>/dev/null
+}
+echo change >> "$T/group-a/dirty/base.txt"
+W="$(wrapper group-a/dirty)"
+lacks "runfix: a placeholder is never run"     "$(echo "$W" | grep '^run ')" '...'
+has   "runfix: it is shown to finish by hand"  "$W" "finish by hand"
+has   "runfix: each line asks first"           "$W" "run it? [y/N]"
+W="$(wrapper group-b/mid-merge)"
+has   "runfix: a failure ends the sequence"    "$W" "the rest was skipped"
+# Run it with every answer y: --continue fails on the fake MERGE_HEAD, and the
+# --abort after it must not get its turn. GIT_EDITOR=false so the commit
+# --continue makes cannot sit waiting on an editor.
+yes y | GIT_EDITOR=false SHELL=/usr/bin/true bash <(echo "$W" | grep -v '^rm -f') >/dev/null 2>&1
+equals "runfix: --abort never follows a failed --continue" \
+       "$([ -f "$T/group-b/mid-merge/.git/MERGE_HEAD" ] && echo kept || echo aborted)" "kept"
+
+echo
+echo "── SETTINGS ARE STORED, NOT EXECUTED ─────────────────"
+# Every bar sources the config, so a value written raw is code: a folder named
+# "Client $work" lost its $work, and a $(…) would have run on every render.
+CFG="$T/.cfg-written.sh"; : > "$CFG"
+mkdir -p "$T/Client \$work"
+SWIFTBAR_CONFIG="$CFG" REPOS_IN="$T/Client \$work" bash "$P" addroot >/dev/null 2>&1
+SWIFTBAR_CONFIG="$CFG" bash "$P" set REPOS_ONLY_PENDING "1\$(touch $T/.pwned)" >/dev/null 2>&1
+SWIFTBAR_CONFIG="$CFG" bash "$S/../bin/colimabar-action" set COLIMA_X "\`touch $T/.pwned\`" >/dev/null 2>&1
+READBACK="$(bash -c '. "$1"; printf "%s\n" "${REPOS_ROOTS[@]}"' _ "$CFG")"
+has    "a \$ in a folder name survives"        "$READBACK" "Client \$work"
+equals "neither \$(…) nor backticks run"      "$([ -e "$T/.pwned" ] && echo ran || echo stored)" "stored"
+
+echo
+echo "── A | IN FREE TEXT ──────────────────────────────────"
+# SwiftBar reads everything after the first | as parameters, and a cloned
+# repository can bring file names of its own choosing.
+touch "$T/group-a/clean/x|href=https:"
+has   "a | in a file name becomes ¦"   "$(bash "$P")" "x¦href=https:"
+
+echo
+echo "── ROOTS THAT USED TO SCAN NOTHING ───────────────────"
+# A root that does not exist read "All up to date · 0 repos", and once said
+# so, the menu still has to offer the way to change it.
+GONE_MENU="$(REPOS_ROOT="$T/.nowhere" bash "$P")"
+has   "a missing root is named"         "$GONE_MENU" "Nothing is being scanned"
+has   "with Settings still on hand"     "$GONE_MENU" "Add a folder…"
+# BSD find does not descend into a root that is a symlink: "0 repos", no warning.
+ln -sfn "$T" "$T.link"
+lacks "a symlinked root is scanned"    "$(REPOS_ROOT="$T.link" bash "$P")" "0 repos"
+rm -f "$T.link"
+# Unquoted, the root was a glob pattern and the group header the whole path.
+mkdir -p "$T/.roots/Work [x]"; cp -R "$T/group-a/clean" "$T/.roots/Work [x]/"
+has   "a root with [ ] keeps its group header" \
+      "$(REPOS_ROOT="$T/.roots/Work [x]" bash "$P" | grep -B1 '^  clean' | head -1)" "WORK [X]"
+rm -rf "$T/.roots"
+# A worktree whose main repository is gone: not a detached HEAD.
+mkdir -p "$T/group-b/orphan"; echo "gitdir: /nonexistent/.git/worktrees/orphan" > "$T/group-b/orphan/.git"
+ORPHAN="$(bash "$P" | sed -n '/^  orphan/,/Open in Terminal/p')"
+has   "an unreadable .git says so"      "$ORPHAN" "git cannot read this repository"
+lacks "and is not called detached"      "$ORPHAN" "Detached HEAD"
+lacks "nor offered branch actions"      "$ORPHAN" "Switch branch"
+rm -rf "$T/group-b/orphan"
+
+echo
 if [ "$CLIPBOARD" != 1 ]; then
   skip "running the suggested sequences: they read the clipboard"
 else

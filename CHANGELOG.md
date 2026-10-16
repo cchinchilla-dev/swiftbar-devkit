@@ -2,6 +2,35 @@
 
 ## [Unreleased]
 
+### Fixed
+- **Run them in Terminal** ran each suggested line on Return, as written: a
+  commit with `"..."` as its message, and `--abort` straight after a
+  `--continue` that stopped on a conflict. Each line now asks `[y/N]`, a
+  failure ends the sequence, and a line with a placeholder is never run.
+- Settings written from the Repos and Colima menus were stored unescaped in a
+  file every bar sources: a `$` in a folder name was expanded away, and a
+  `$(…)` would have run on every refresh.
+- A `|` in a stash message, a file name, a group or a remote name spilled into
+  SwiftBar's parameters.
+- A scan root that is a symlink, or whose path holds `[ ]`, and a root that no
+  longer exists all read "All up to date · 0 repos". The missing root is now
+  named, with Settings still on hand to remove it.
+- A worktree whose main repository moved was shown as a detached HEAD, with
+  advice about commits that would be lost.
+- `zsh install.sh` ignored which bars you picked and handed Homebrew every
+  formula as one name.
+- Rows with an icon left their neighbours indented on macOS 26, which lines a
+  whole menu section up on its icons.
+
+### Changed
+- Stopping or restarting the Colima VM or its service, and restarting
+  llama-swap, now ask first: everything running goes down with them.
+- The Repos bar walks each root once instead of three times, and stays out of
+  `.git`. Colima asks Docker for its containers once per refresh, llama-swap
+  reads every model's state in one `jq`.
+- The ports bar shows the interpreter by name, not by its full path.
+- New screenshots, in light and dark.
+
 ## [0.1.0] - 2026-08-23
 
 First public release. Four SwiftBar bars, an installer, and a test suite.

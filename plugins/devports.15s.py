@@ -758,6 +758,13 @@ def main():
         ordered = sorted(port_set)
         useful = [p for p in ordered if p not in DEBUG_PORTS]
         name, project = app_name(runtime, line, cwds.get(pid))
+        # The interpreter's directory says nothing the rows above do not, and
+        # the Command Line Tools' Python runs to ninety characters of it before
+        # the script even appears. Matched on comm, so a path with spaces in it
+        # loses its directory whole rather than at the first space.
+        shown = line
+        if comm.startswith("/") and line.startswith(comm):
+            shown = os.path.basename(comm) + line[len(comm):]
         services.append({
             "pid": pid,
             "runtime": runtime,
@@ -766,7 +773,7 @@ def main():
             "ports": ordered,
             "primary": useful[0] if useful else ordered[0],
             "origin": came_from,
-            "cmd": line,
+            "cmd": shown,
             "comm": os.path.basename(comm),
             "start": starts.get(pid, ""),
         })

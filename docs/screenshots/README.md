@@ -1,33 +1,14 @@
 # Screenshots
 
-Every menu below is real output, taken against dummy repositories and services.
+Each image comes in light and dark, and the README picks the one that matches
+GitHub's theme.
 
-## Repos
+## The images
 
-The list: each repository with what is wrong with it at a glance.
-
-<img src="repos-list.png" alt="The Repos menu listing repositories with their state" width="232">
-
-A repository opened: stashes, branches, and the commands that fix whatever it is
-showing.
-
-<img src="repos-actions.png" alt="A repository expanded, showing stashes and actions" width="227">
-
-## Dev ports
-
-Your services holding a local port, named after their project rather than their
-entry point.
-
-<img src="devports.png" alt="The Dev ports menu listing services by project name" width="508">
-
-## Colima
-
-The container VM, its containers, and the disk they are using.
-
-<img src="colima.png" alt="The Colima menu showing the VM and its containers" width="204">
-
-## llama-swap
-
-Which model is loaded, and what it is costing you.
-
-<img src="llama.png" alt="The llama-swap menu showing the loaded model" width="276">
+| Image | Shows |
+| --- | --- |
+| `repos` | the four bars in the menu bar, Repos open on a repository that is behind, ahead and dirty |
+| `stashes` | a repository with stashes: each one, its branches and the actions on it |
+| `devports` | the services holding a port, named after their project, one opened |
+| `colima` | the VM and its containers, one opened |
+| `llama` | the loaded model and the context window it is using |

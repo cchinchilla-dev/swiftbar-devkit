@@ -67,6 +67,10 @@ again from disk." || exit 0
     ;;
 
   svcrestart)
+    # A restart unloads the model exactly like a stop does.
+    confirm "Restart llama-swap?" \
+"Any loaded model is unloaded with it, and the next request has to load it
+again from disk." || exit 0
     mark "Restarting the service…"
     launchctl kickstart -k "gui/$(id -u)/$LABEL" 2>/dev/null
     ;;

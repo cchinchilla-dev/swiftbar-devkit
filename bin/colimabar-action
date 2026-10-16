@@ -35,7 +35,7 @@ notify() {
 confirm() {
   [[ -n "${COLIMABAR_ASSUME_YES:-}" ]] && return 0
   osascript >/dev/null 2>&1 <<AS
-display alert "$(as_quote "$1")" message "$(as_quote "$2")" as critical buttons {"Cancel", "Remove"} default button 1 cancel button 1
+display alert "$(as_quote "$1")" message "$(as_quote "$2")" as critical buttons {"Cancel", "$(as_quote "${3:-Remove}")"} default button 1 cancel button 1
 AS
 }
 
@@ -88,8 +88,12 @@ case "$VERB" in
   # marker the menu looked like the click had done nothing and invited a
   # second one on top of the first.
   start)     mark "Starting…";   colima start ${ARG:+--profile "$ARG"} ;;
-  stop)      mark "Stopping…";   colima stop  ${ARG:+"$ARG"} ;;
-  restart)   mark "Restarting…"; colima restart ${ARG:+"$ARG"} ;;
+  # Every container goes down with the VM, and whatever they held only in
+  # memory with them: one stray click on a menu that refreshes under you.
+  stop)      confirm "Stop ${ARG:-default}?" "Every container in it stops too." "Stop" || exit 0
+             mark "Stopping…";   colima stop  ${ARG:+"$ARG"} ;;
+  restart)   confirm "Restart ${ARG:-default}?" "Every container in it is stopped and started again." "Restart" || exit 0
+             mark "Restarting…"; colima restart ${ARG:+"$ARG"} ;;
   # --profile, like every other call here: without it these two always spoke
   # to the default instance, whatever the menu was showing.
   shell)     colima ssh ${ARG:+--profile "$ARG"} ;;
@@ -202,6 +206,7 @@ PY
     pause
     ;;
   svcoff)
+    confirm "Stop the Colima service?" "The VM stops with it, and every container in it." "Stop" || exit 0
     mark "Stopping the service…"
     # brew services only unloads the agent: the VM lives on separately
     brew services stop colima
@@ -231,7 +236,12 @@ PY
 import re, sys
 path, key, value = sys.argv[1:4]
 txt = open(path).read()
-line = '%s="%s"' % (key, value)
+# This file is sourced by every bar, so a value is shell code, not just text.
+# $HOME is spared on purpose so stored paths stay portable between machines.
+def quote(v):
+    out = v.replace("\\", "\\\\").replace('"', '\\"').replace("`", "\\`")
+    return re.sub(r'\$(?!HOME\b)', r'\\$', out)
+line = '%s="%s"' % (key, quote(value))
 pat = re.compile(r'^%s=.*$' % re.escape(key), re.M)
 txt = pat.sub(lambda _: line, txt, count=1) if pat.search(txt) else txt.rstrip() + "\n" + line + "\n"
 open(path, "w").write(txt)

@@ -4,6 +4,9 @@
 #
 #   bash install.sh              install
 #   bash install.sh --uninstall  remove the symlinks, keep your config
+# zsh does not word-split $reply or $FORMULAE: under `zsh install.sh` a pick
+# of "1 3" linked every bar, and brew got all the formulae as one name.
+[ -n "$ZSH_VERSION" ] && exec /bin/bash "$0" "$@"
 set -e
 
 REPO="$(cd "$(dirname "$0")" && pwd)"

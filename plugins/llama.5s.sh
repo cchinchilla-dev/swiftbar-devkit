@@ -75,8 +75,8 @@ settings_menu() {
   else
     echo "--⚠ llama-swap not found on PATH | $MONO"
   fi
-  echo "--Edit llama-swap config… | bash=\"$ACTION\" param1=editswap terminal=false"
-  echo "--View log… | bash=\"$ACTION\" param1=logs terminal=false"
+  echo "--Edit llama-swap config… | bash=\"$ACTION\" param1=editswap terminal=false sfimage=pencil"
+  echo "--View log… | bash=\"$ACTION\" param1=logs terminal=false sfimage=doc.text"
   echo "--Copy base URL | bash=\"$ACTION\" param1=copyurl terminal=false sfimage=doc.on.doc"
 }
 
@@ -113,7 +113,7 @@ if [ "$HEALTH" != "OK" ]; then
     if [ -n "$OPERATION" ]; then
       echo "$OPERATION | $MONO"
     else
-      echo "Restart the service | bash=\"$ACTION\" param1=svcrestart terminal=false refresh=true"
+      echo "Restart the service… | bash=\"$ACTION\" param1=svcrestart terminal=false refresh=true"
       echo "Stop the service… | bash=\"$ACTION\" param1=svcstop terminal=false refresh=true"
     fi
   else
@@ -140,7 +140,7 @@ if ! printf '%s' "$MODELS_JSON" | jq -e '.data' >/dev/null 2>&1; then
   sep
   echo "Answering, but the model list is unreadable"
   echo "--$ADDR/models returned nothing usable. | $MONO"
-  echo "Restart the service | bash=\"$ACTION\" param1=svcrestart terminal=false refresh=true"
+  echo "Restart the service… | bash=\"$ACTION\" param1=svcrestart terminal=false refresh=true"
   echo "View log… | bash=\"$ACTION\" param1=logs terminal=false"
   settings_menu
   sep
@@ -179,9 +179,10 @@ else
   echo "Models"
 fi
 
-while IFS= read -r M; do
+# Id and state in one jq: a second one per model, to look the state back up,
+# was a fork per row every five seconds.
+while IFS=$'\t' read -r M STATE; do
   [ -z "$M" ] || [ "$M" = "null" ] && continue
-  STATE="$(printf '%s' "$MODELS_JSON" | jq -r --arg m "$M" '.data[]|select(.id==$m)|.status.value')"
   case "$STATE" in
     loaded)
       echo "--● $M"
@@ -204,7 +205,7 @@ while IFS= read -r M; do
       echo "----Load… | bash=\"$ACTION\" param1=load param2=\"$M\" terminal=false refresh=true"
       ;;
   esac
-done <<< "$(printf '%s' "$MODELS_JSON" | jq -r '.data[].id')"
+done <<< "$(printf '%s' "$MODELS_JSON" | jq -r '.data[] | [.id, (.status.value // "")] | @tsv')"
 
 if [ -n "$LOADED" ]; then
   echo "--Unload everything | bash=\"$ACTION\" param1=unload terminal=false refresh=true"
@@ -213,11 +214,13 @@ fi
 # ----------------------------------------------------------------- service
 
 sep
-echo "Service"
+# macOS 26 lines up a whole section on its icons: without one of its own,
+# this sat indented beside "Open web UI" as if it were a sub-item.
+echo "Service | sfimage=server.rack"
 if [ -n "$OPERATION" ]; then
   echo "--$OPERATION | $MONO"
 else
-  echo "--Restart | bash=\"$ACTION\" param1=svcrestart terminal=false refresh=true"
+  echo "--Restart… | bash=\"$ACTION\" param1=svcrestart terminal=false refresh=true"
   echo "--Stop… | bash=\"$ACTION\" param1=svcstop terminal=false refresh=true"
 fi
 echo "Open web UI | bash=\"$ACTION\" param1=ui terminal=false sfimage=globe"

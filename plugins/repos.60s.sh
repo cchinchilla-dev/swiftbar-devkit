@@ -158,13 +158,21 @@ set_config() {   # $1=key, or key[] for the array  rest=value(s)
   python3 - "$CONFIG" "$key" "$@" <<'PY'
 import re, sys
 path, key, values = sys.argv[1], sys.argv[2], sys.argv[3:]
+
+# Every bar sources this file, so a value is shell code: "Add a folder…" with
+# ~/Client $work stored the path raw, and the next render expanded $work to
+# nothing. $HOME is spared so stored paths stay portable.
+def quote(v):
+    out = v.replace("\\", "\\\\").replace('"', '\\"').replace("`", "\\`")
+    return re.sub(r'\$(?!HOME\b)', r'\\$', out)
+
 txt = open(path).read()
 if key.endswith("[]"):
     key = key[:-2]
-    block = key + "=(\n" + "".join('  "%s"\n' % v for v in values) + ")"
+    block = key + "=(\n" + "".join('  "%s"\n' % quote(v) for v in values) + ")"
     pat = re.compile(r'^%s=\(.*?^\)' % re.escape(key), re.M | re.S)
 else:
-    block = '%s="%s"' % (key, values[0])
+    block = '%s="%s"' % (key, quote(values[0]))
     pat = re.compile(r'^%s=.*$' % re.escape(key), re.M)
 txt = pat.sub(lambda _: block, txt, count=1) if pat.search(txt) else txt.rstrip() + "\n" + block + "\n"
 open(path, "w").write(txt)
@@ -336,23 +344,12 @@ read_state() {
   # and it is exactly when you need push -u.
   [ -n "$UP" ] && [ -z "$AB" ] && [ -n "$BRANCH" ] && UPGONE=1
 
-  if [ -z "$HDR" ]; then
-    # No header means the git here predates porcelain v2 (2.11, 2016) or the
-    # path is not a repo. Ask the old way rather than reporting zeros.
-    BRANCH="$(git -C "$R" symbolic-ref --quiet --short HEAD 2>/dev/null)"
-    # for-each-ref, not rev-parse @{upstream}: when the upstream ref is missing
-    # rev-parse echoes the literal "@{upstream}" back and still exits 0, which
-    # ended up rendered as Tracks '@{upstream}', not '@{upstream}/branch'.
-    UP="$(git -C "$R" for-each-ref --format='%(upstream:short)' "refs/heads/$BRANCH" 2>/dev/null)"
-    [ -n "$UP" ] && ! git -C "$R" rev-parse --verify --quiet "refs/remotes/$UP" >/dev/null 2>&1 && UPGONE=1
-    ST="$(git -C "$R" status --porcelain 2>/dev/null)"
-    DIRTY="$(printf '%s' "$ST" | grep -c .)"
-    CONFLICTS="$(printf '%s' "$ST" | grep -cE '^(DD|AU|UD|UA|DU|AA|UU) ')"
-    if [ -n "$UP" ] && [ -z "$UPGONE" ]; then
-      local C; C="$(git -C "$R" rev-list --left-right --count "@{upstream}...HEAD" 2>/dev/null)"
-      BEHIND="$(echo "$C" | cut -f1)"; AHEAD="$(echo "$C" | cut -f2)"
-    fi
-  fi
+  # No header: git could not read the repository at all. A worktree whose main
+  # repo was moved is the usual one, its .git a pointer to nowhere. This was
+  # rendered as "Detached HEAD", with the advice that commits only living
+  # there would be lost — and a fallback for pre-2016 git ran five more
+  # failing git calls for it on every render.
+  BROKEN=""; [ -z "$HDR" ] && BROKEN=1
   DIRTY="${DIRTY// /}"; CONFLICTS="${CONFLICTS// /}"
   : "${DIRTY:=0}"; : "${CONFLICTS:=0}"; : "${BEHIND:=0}"; : "${AHEAD:=0}"
 
@@ -432,7 +429,8 @@ read_state() {
     FETCH_AGE=$(( NOW - $(stat -f %m "$COMMONDIR/FETCH_HEAD" 2>/dev/null || echo 0) ))
 
   WARN=""
-  if [ -n "$INPROGRESS" ];            then WARN="$INPROGRESS in progress"
+  if [ -n "$BROKEN" ];                then WARN="git cannot read this repository"
+  elif [ -n "$INPROGRESS" ];          then WARN="$INPROGRESS in progress"
   elif [ -z "$BRANCH" ];              then WARN="Detached HEAD"
   elif [ -z "$UP" ];                  then WARN="No upstream branch"
   elif [ -n "$UPGONE" ];              then WARN="'$UP' is not on the remote yet"
@@ -489,6 +487,11 @@ signing_blocked() {
 # Uses the globals left by read_state.
 commands_for() {
   local R="$1"
+
+  if [ -n "$BROKEN" ]; then
+    echo "git status   # says why it cannot read it"
+    return
+  fi
 
   # --- Something is half-done. Nothing else is worth suggesting until it is
   #     finished or aborted, so this returns early.
@@ -562,6 +565,59 @@ commands_for() {
   # the real state may differ.
   [ -n "$FIX_UP" ] && [ "${FIX_UP#git branch}" != "$FIX_UP" ] && \
     echo "# after re-attaching, check the state again"
+}
+
+# The Settings submenu. A function because the early exit for a config that
+# scans nothing needs it most: that is where a dead root has to be removed.
+settings_menu() {
+  local r p lbl n cpath cn app mark
+  echo "Settings | sfimage=gearshape"
+  if [ -f "$CONFIG" ]; then
+    echo "--$(pretty_path "$CONFIG") | $MONO"
+  else
+    echo "--⚠ no config file yet · using defaults | $MONO"
+  fi
+  echo "--Open config file | bash=\"$SELF\" param1=openconfig terminal=false"
+  echo "-----"
+  echo "--Scanning: | $MONO"
+  for r in "${ROOTS[@]}"; do
+    p="${r%%|*}"; lbl=""; [ "$r" != "$p" ] && lbl="  ·  ${r#*|}"
+    if [ -d "$p" ]; then
+      n=""
+      while IFS="$SEP" read -r cpath cn; do
+        [ "$cpath" = "$p" ] && { n="$cn"; break; }
+      done <<< "$COUNTS"
+      echo "--  $(pretty_path "$p")  ·  $(plural "${n:-0}" "repo" "repos")$lbl | $MONO"
+    else
+      echo "--  ⚠ $(pretty_path "$p")  ·  folder not found$lbl | $MONO"
+    fi
+  done
+  echo "--Add a folder… | bash=\"$SELF\" param1=addroot terminal=false refresh=true"
+  if [ "${#ROOTS[@]}" -gt 1 ]; then
+    echo "--Stop scanning"
+    for r in "${ROOTS[@]}"; do
+      enc "$r"
+      echo "----$(pretty_path "${r%%|*}") | bash=\"$SELF\" param1=delroot param2=$ENC terminal=false refresh=true"
+    done
+  fi
+  echo "-----"
+  echo "--Open in: ${IDE:-none}"
+  for app in "PyCharm" "IntelliJ IDEA" "GoLand" "WebStorm" "PhpStorm" "RubyMine" \
+             "Visual Studio Code" "Cursor" "Zed"; do
+    [ -d "/Applications/$app.app" ] || continue
+    mark=""; [ "$app" = "$IDE" ] && mark="  ✓"
+    echo "----$app$mark | bash=\"$SELF\" param1=setide param2=\"$app\" terminal=false refresh=true"
+  done
+  echo "----(none) | bash=\"$SELF\" param1=setide param2=\"\" terminal=false refresh=true"
+  echo "--Search depth: $DEPTH$([ "$DEEPER" -gt 0 ] && echo "  ·  ⚠ $DEEPER not reached") | bash=\"$SELF\" param1=setnum param2=REPOS_DEPTH param3=\"How many folders deep to search:\" param4=\"$DEPTH\" terminal=false refresh=true"
+  if [ "$ONLY_PENDING" = "1" ]; then
+    echo "--Showing: only repos needing attention  ✓ | bash=\"$SELF\" param1=set param2=REPOS_ONLY_PENDING param3=0 terminal=false refresh=true"
+  else
+    echo "--Showing: all repos | bash=\"$SELF\" param1=set param2=REPOS_ONLY_PENDING param3=1 terminal=false refresh=true"
+  fi
+  echo "--Fetch stale after: ${REPOS_FETCH_STALE_HOURS:-24} h | bash=\"$SELF\" param1=setnum param2=REPOS_FETCH_STALE_HOURS param3=\"Warn when the last fetch is older than, in hours:\" param4=\"${REPOS_FETCH_STALE_HOURS:-24}\" terminal=false refresh=true"
+  echo "-----"
+  echo "--git $(git --version 2>/dev/null | awk '{print $3}')  ·  $(command -v git) | $MONO"
 }
 
 # ---------------------------------------------------------------- actions
@@ -783,19 +839,29 @@ Delete those by hand if you are sure."
 
 $(printf '%s' "$LINES" | sed 's/^/  /')
 
-They are typed in, not executed — you press Return yourself." || exit 0
+Each one asks before it runs, and nothing runs after one fails. Lines with a placeholder are shown for you to finish by hand." || exit 0
     # A wrapper, because Terminal cannot be handed a working directory and a
     # command at once. mktemp so the path is not predictable; the script
     # removes itself before handing control over.
     W="$(mktemp -t reposbar)" || fail "$N" "Could not create the helper script."
     mv "$W" "$W.command"; W="$W.command"
+    # Return used to run the line, as written: git commit -m "..." with every
+    # untracked file staged, git switch <branch> as a syntax error, and after a
+    # --continue that stopped on a conflict, the next Return ran --abort and
+    # threw the resolution away. Each line now defaults to skip, a failure ends
+    # the sequence, and a placeholder is never run at all.
     {
       printf '#!/bin/bash\n'
       printf 'rm -f "$0"\n'
       printf 'cd %q || exit 1\n' "$R"
-      printf 'echo "Ready in %s. Press Return to run each line."\n' "$N"
+      printf 'run() { printf "\\n> %%s\\n  run it? [y/N] " "$1"; read -r a; case "$a" in y|Y) eval "$1" || { echo "  It failed, so the rest was skipped."; exec $SHELL; } ;; esac; }\n'
+      printf 'echo %q\n' "Ready in $N. y runs a line, Return skips it."
       while IFS= read -r L; do
-        [ -n "$L" ] && printf 'printf %%s %q; read -r _; %s\n' "> $L" "$L"
+        case "$L" in
+          '') ;;
+          *'<'*'>'*|*'"..."'*) printf 'printf "\\n%%s\\n" %q\n' "  finish by hand: $L" ;;
+          *) printf 'run %q\n' "$L" ;;
+        esac
       done <<< "$LINES"
       printf 'echo; echo "Done."; exec $SHELL\n'
     } > "$W"
@@ -1126,36 +1192,68 @@ N_BEHIND=0; N_AHEAD=0; N_DIRTY=0; N_WARN=0; N_STASH=0; N_BUSY=0
 LIST=""
 DEEPER=0
 COUNTS=""
+GONE=""
 for ENTRY in "${ROOTS[@]}"; do
   RPATH="${ENTRY%%|*}"; RLABEL=""
   [ "$ENTRY" != "$RPATH" ] && RLABEL="${ENTRY#*|}"
-  [ -d "$RPATH" ] || continue
+  [ -d "$RPATH" ] || { GONE="$GONE$RPATH$NL"; continue; }
 
   # A repository one level below the limit is completely invisible, and the
   # menu looks perfectly healthy without it — eleven were missing here before
-  # anyone noticed. One probe a few levels deeper says so. Costs ~60 ms.
-  N_HERE="$(find "$RPATH" -maxdepth "$DEPTH" \( "${PRUNE[@]}" \) -prune -o -name .git -print 2>/dev/null | grep -c .)"
+  # anyone noticed. So the walk goes a few levels past the limit and counts
+  # what it finds down there.
+  # One walk, split by depth here, where this used to be three over the same
+  # tree. -H because BSD find does not descend into a root that is itself a
+  # symlink: the bar read "All up to date · 0 repos". .git is pruned so the
+  # walk stays out of the object store, a third of everything it visited.
+  # Not -type d: in a worktree or a submodule, .git is a FILE pointing at the
+  # real git dir. Matching only directories left both invisible.
+  N_HERE=0; N_DEEP=0; HERE=""
+  # read, not word splitting: a repository under "Client Work" used to render
+  # as two phantom rows and never as itself.
+  while IFS= read -r G; do
+    [ -n "$G" ] || continue
+    N_DEEP=$((N_DEEP + 1))
+    REL="${G#"$RPATH"}"; REL="${REL#/}"; SLASHES="${REL//[!\/]/}"
+    [ "${#SLASHES}" -lt "$DEPTH" ] || continue
+    N_HERE=$((N_HERE + 1)); HERE="$HERE${G%/.git}$NL"
+  done <<< "$(find -H "$RPATH" -maxdepth $((DEPTH + 3)) \( "${PRUNE[@]}" \) -prune -o \
+                  -name .git -prune -print 2>/dev/null)"
+  DEEPER=$((DEEPER + N_DEEP - N_HERE))
   # Kept for the Settings section, which used to run this identical find a
   # second time — a tenth of the whole render, for a number already in hand.
   COUNTS="$COUNTS$RPATH$SEP$N_HERE$NL"
-  N_DEEP="$(find "$RPATH" -maxdepth $((DEPTH + 3)) \( "${PRUNE[@]}" \) -prune -o -name .git -print 2>/dev/null | grep -c .)"
-  DEEPER=$((DEEPER + N_DEEP - N_HERE))
-  # Not -type d: in a worktree or a submodule, .git is a FILE pointing at the
-  # real git dir. Matching only directories left both invisible.
-  # read, not word splitting: a repository under "Client Work" used to render
-  # as two phantom rows and never as itself.
   while IFS= read -r R; do
     [ -n "$R" ] || continue
     LIST="$LIST$RPATH$SEP$RLABEL$SEP$R"$'\n'
-  done <<< "$(find "$RPATH" -maxdepth "$DEPTH" \( "${PRUNE[@]}" \) -prune -o \
-                  -name .git -print 2>/dev/null | sed 's|/.git$||' | sort)"
+  done <<< "$(printf '%s' "$HERE" | sort)"
 done
+
+# A root that no longer exists was skipped in silence, and the summary below
+# then read "All up to date · 0 repos" — a healthy-looking menu for a bar that
+# is scanning nothing at all. Moving a workspace is all it takes.
+if [ -z "$LIST" ] && [ -n "$GONE" ]; then
+  echo " | sfimage=exclamationmark.triangle"
+  echo "---"
+  echo "Nothing is being scanned"
+  while IFS= read -r g; do
+    [ -n "$g" ] || continue
+    echo "$(pretty_path "$g") does not exist | $MONO"
+  done <<< "$GONE"
+  echo "---"
+  settings_menu
+  echo "---"
+  echo "Refresh | refresh=true"
+  exit 0
+fi
 
 while IFS="$SEP" read -r RPATH RLABEL R; do
   [ -n "$R" ] || continue
   ALL_PATHS="$ALL_PATHS|$R"
   NAME="${R##*/}"
-  REL="${R#$RPATH/}"
+  # Quoted, or the root is a pattern: under "~/Work [x]" the brackets matched
+  # nothing and the group header became the whole absolute path.
+  REL="${R#"$RPATH"/}"
   case "$REL" in */*) GROUP="${REL%/*}" ;; *) GROUP="${RPATH%/}"; GROUP="${GROUP##*/}" ;; esac
   [ -n "$RLABEL" ] && GROUP="$RLABEL / $GROUP"
 
@@ -1172,11 +1270,11 @@ while IFS="$SEP" read -r RPATH RLABEL R; do
     PENDING=$((PENDING + 1))
   fi
 
-  SHOWN="${BRANCH:-detached}"
+  SHOWN="${BRANCH:-detached}"; [ -n "$BROKEN" ] && SHOWN="?"
   [ ${#NAME}   -gt "$W_NAME" ]   && W_NAME=${#NAME}
   [ ${#SHOWN}  -gt "$W_BRANCH" ] && W_BRANCH=${#SHOWN}
 
-  DATA+=("$GROUP$SEP$NAME$SEP$SHOWN$SEP$BEHIND$SEP$AHEAD$SEP$DIRTY$SEP$WARN$SEP$R$SEP$BRANCH$SEP$UP$SEP$STASH$SEP$INPROGRESS$SEP$CONFLICTS$SEP$COMMONDIR$SEP$REMOTE$SEP$FETCH_AGE$SEP$UPGONE")
+  DATA+=("$GROUP$SEP$NAME$SEP$SHOWN$SEP$BEHIND$SEP$AHEAD$SEP$DIRTY$SEP$WARN$SEP$R$SEP$BRANCH$SEP$UP$SEP$STASH$SEP$INPROGRESS$SEP$CONFLICTS$SEP$COMMONDIR$SEP$REMOTE$SEP$FETCH_AGE$SEP$UPGONE$SEP$BROKEN")
 done <<< "$LIST"
 
 # ------------------------------------------------------------------ menu bar
@@ -1206,6 +1304,15 @@ if [ "$DEEPER" -gt 0 ]; then
   echo "  ⚠ $(plural "$DEEPER" "repository is" "repositories are") deeper than the search depth of $DEPTH | $MONO"
 fi
 
+# Some roots resolved and some did not: the rows below are real but incomplete,
+# so the missing ones are named instead of quietly dropped.
+if [ -n "$GONE" ]; then
+  while IFS= read -r g; do
+    [ -n "$g" ] || continue
+    echo "  ⚠ $(pretty_path "$g") does not exist | $MONO"
+  done <<< "$GONE"
+fi
+
 LAST_GROUP=""
 for ROW in "${DATA[@]}"; do
   # noglob: the fields are data, and unquoted expansion was matching them
@@ -1214,9 +1321,9 @@ for ROW in "${DATA[@]}"; do
   GROUP="$1"; NAME="$2"; SHOWN="$3"; BEHIND="$4"; AHEAD="$5"; DIRTY="$6"; WARN="$7"; R="$8"
   # Git allows | in a ref name and SwiftBar splits the line on the first one,
   # so a branch called fea|ture cut the row short and spilled the rest into
-  # parameters. Substitute in the three fields that reach a title.
-  NAME="${NAME//|/¦}"; SHOWN="${SHOWN//|/¦}"; WARN="${WARN//|/¦}"
-  BRANCH="$9"; UP="${10}"; STASH="${11:-0}"; INPROGRESS="${12:-}"; CONFLICTS="${13:-0}"; COMMONDIR="${14:-}"; REMOTE="${15:-origin}"; FETCH_AGE="${16:-}"; UPGONE="${17:-}"
+  # parameters. Substitute in every field that reaches a title.
+  GROUP="${GROUP//|/¦}"; NAME="${NAME//|/¦}"; SHOWN="${SHOWN//|/¦}"; WARN="${WARN//|/¦}"
+  BRANCH="$9"; UP="${10}"; STASH="${11:-0}"; INPROGRESS="${12:-}"; CONFLICTS="${13:-0}"; COMMONDIR="${14:-}"; REMOTE="${15:-origin}"; FETCH_AGE="${16:-}"; UPGONE="${17:-}"; BROKEN="${18:-}"
 
   # A stash counts here even though it does not count towards PENDING: hiding
   # a repository that is holding stashed work would be losing sight of it.
@@ -1277,7 +1384,7 @@ for ROW in "${DATA[@]}"; do
         echo "--  … and $((DIRTY - MAX_FILES)) more | $MONO"
         break
       fi
-      echo "--  $F | $MONO"
+      echo "--  ${F//|/¦} | $MONO"
     done <<< "$(git -C "$R" status --porcelain 2>/dev/null)"
   fi
 
@@ -1286,7 +1393,9 @@ for ROW in "${DATA[@]}"; do
     echo "-----"
     while IFS="$(printf '\t')" read -r IDX AGE MSG; do
       [ -n "$IDX" ] || continue
-      echo "--stash@{$IDX} · $AGE · $MSG | $MONO"
+      # A stash message or a file name is free text, and the first | in a line
+      # is where SwiftBar's parameters start: "wip | refresh=true" was one.
+      echo "--stash@{$IDX} · $AGE · ${MSG//|/¦} | $MONO"
       for V in show apply pop; do
         C="$(stash_cmd "$IDX" "$V")"
         enc "$C"
@@ -1319,7 +1428,9 @@ for ROW in "${DATA[@]}"; do
 
   # ---- actions, only the ones that make sense in this state
   echo "-----"
-  if [ -n "$INPROGRESS" ]; then
+  if [ -n "$BROKEN" ]; then
+    echo "--Branch actions need a repository git can read | $MONO"
+  elif [ -n "$INPROGRESS" ]; then
     # Mid-operation every one of these either fails outright or makes things
     # worse: pulling, pushing, stashing a half-resolved tree, branching off it.
     echo "--Finish or abort the $INPROGRESS first | $MONO"
@@ -1385,7 +1496,7 @@ for ROW in "${DATA[@]}"; do
       b="${ref#refs/remotes/$RNAME/}"
       # refs/remotes/<remote>/HEAD is a symbolic ref, not a branch.
       [ "$b" = "HEAD" ] && continue
-      [ -z "$HEADER" ] && { echo "----$RNAME"; HEADER=1; }
+      [ -z "$HEADER" ] && { echo "----${RNAME//|/¦}"; HEADER=1; }
       enc "$RNAME/$b"
       echo "------${b//|/¦} | bash=\"$SELF\" param1=switch param2=\"$R\" param3=$ENC terminal=false refresh=true"
     done <<< "$REFS"
@@ -1416,11 +1527,11 @@ for ROW in "${DATA[@]}"; do
   echo "--Rename branch… | bash=\"$SELF\" param1=rename param2=\"$R\" param3=$ENC terminal=false refresh=true"
   fi
   echo "-----"
-  echo "--Open in Terminal | bash=\"$SELF\" param1=terminal param2=\"$R\" terminal=false"
+  echo "--Open in Terminal | bash=\"$SELF\" param1=terminal param2=\"$R\" terminal=false sfimage=terminal"
   echo "--Open on the remote | bash=\"$SELF\" param1=browse param2=\"$R\" terminal=false sfimage=globe"
   if [ -n "$IDE" ] || [ -n "$IDE_CMD" ]; then
     PICK="$(ide_for "$R")"
-    echo "--Open in ${PICK:-$IDE_CMD} | bash=\"$SELF\" param1=ide param2=\"$R\" param3=\"$PICK\" terminal=false"
+    echo "--Open in ${PICK:-$IDE_CMD} | bash=\"$SELF\" param1=ide param2=\"$R\" param3=\"$PICK\" terminal=false sfimage=chevron.left.forwardslash.chevron.right"
   fi
 done
 
@@ -1439,53 +1550,7 @@ if [ "$ONLY_PENDING" = "1" ] && [ "$HIDDEN" -gt 0 ]; then
 fi
 
 echo "---"
-echo "Settings | sfimage=gearshape"
-if [ -f "$CONFIG" ]; then
-  echo "--$(pretty_path "$CONFIG") | $MONO"
-else
-  echo "--⚠ no config file yet · using defaults | $MONO"
-fi
-echo "--Open config file | bash=\"$SELF\" param1=openconfig terminal=false"
-echo "-----"
-echo "--Scanning: | $MONO"
-for r in "${ROOTS[@]}"; do
-  p="${r%%|*}"; lbl=""; [ "$r" != "$p" ] && lbl="  ·  ${r#*|}"
-  if [ -d "$p" ]; then
-    n=""
-    while IFS="$SEP" read -r cpath cn; do
-      [ "$cpath" = "$p" ] && { n="$cn"; break; }
-    done <<< "$COUNTS"
-    echo "--  $(pretty_path "$p")  ·  $(plural "${n:-0}" "repo" "repos")$lbl | $MONO"
-  else
-    echo "--  ⚠ $(pretty_path "$p")  ·  folder not found$lbl | $MONO"
-  fi
-done
-echo "--Add a folder… | bash=\"$SELF\" param1=addroot terminal=false refresh=true"
-if [ "${#ROOTS[@]}" -gt 1 ]; then
-  echo "--Stop scanning"
-  for r in "${ROOTS[@]}"; do
-    enc "$r"
-    echo "----$(pretty_path "${r%%|*}") | bash=\"$SELF\" param1=delroot param2=$ENC terminal=false refresh=true"
-  done
-fi
-echo "-----"
-echo "--Open in: ${IDE:-none}"
-for app in "PyCharm" "IntelliJ IDEA" "GoLand" "WebStorm" "PhpStorm" "RubyMine" \
-           "Visual Studio Code" "Cursor" "Zed"; do
-  [ -d "/Applications/$app.app" ] || continue
-  mark=""; [ "$app" = "$IDE" ] && mark="  ✓"
-  echo "----$app$mark | bash=\"$SELF\" param1=setide param2=\"$app\" terminal=false refresh=true"
-done
-echo "----(none) | bash=\"$SELF\" param1=setide param2=\"\" terminal=false refresh=true"
-echo "--Search depth: $DEPTH$([ "$DEEPER" -gt 0 ] && echo "  ·  ⚠ $DEEPER not reached") | bash=\"$SELF\" param1=setnum param2=REPOS_DEPTH param3=\"How many folders deep to search:\" param4=\"$DEPTH\" terminal=false refresh=true"
-if [ "$ONLY_PENDING" = "1" ]; then
-  echo "--Showing: only repos needing attention  ✓ | bash=\"$SELF\" param1=set param2=REPOS_ONLY_PENDING param3=0 terminal=false refresh=true"
-else
-  echo "--Showing: all repos | bash=\"$SELF\" param1=set param2=REPOS_ONLY_PENDING param3=1 terminal=false refresh=true"
-fi
-echo "--Fetch stale after: ${REPOS_FETCH_STALE_HOURS:-24} h | bash=\"$SELF\" param1=setnum param2=REPOS_FETCH_STALE_HOURS param3=\"Warn when the last fetch is older than, in hours:\" param4=\"${REPOS_FETCH_STALE_HOURS:-24}\" terminal=false refresh=true"
-echo "-----"
-echo "--git $(git --version 2>/dev/null | awk '{print $3}')  ·  $(command -v git) | $MONO"
+settings_menu
 
 echo "---"
 echo "Refresh | refresh=true"
