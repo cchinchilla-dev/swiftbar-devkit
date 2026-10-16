@@ -122,9 +122,17 @@ B64() {   # $1=repo  $2=which clickable command, starting at 1
   echo "$R" | sed -n "/^  $1/,/Open in Terminal/p" | grep -F 'copy-one' \
     | sed -n "$2p" | grep -o 'param3=[^ ]*' | cut -d= -f2-
 }
-OUT="$(bash "$P" copy-one "$T/group-a/with-stash" "$(B64 with-stash 5)" 2>&1)"
+OUT="$(bash "$P" copy-one "$T/group-b/dirty-behind" "$(B64 dirty-behind 1)" 2>&1)"
 has    "copy-one: notifies"                  "$OUT" "NOTICE"
-bash "$P" copy-one "$T/group-a/with-stash" "$(B64 with-stash 1)" >/dev/null 2>&1
+# A stash item carries its verb and index, not the command: the action
+# rebuilds it, and takes nothing but the three verbs and a number.
+has    "stash items go through copy-stash"   "$(echo "$R" | sed -n '/^  with-stash/,/Open in Terminal/p')" "param1=copy-stash"
+OUT="$(bash "$P" copy-stash "$T/group-a/with-stash" pop 0 2>&1)"
+has    "copy-stash: rebuilds the command"    "$OUT" "git stash pop stash@{0}"
+OUT="$(bash "$P" copy-stash "$T/group-a/with-stash" drop 0 2>&1)"
+lacks  "copy-stash: only show, apply, pop"   "$OUT" "NOTICE"
+OUT="$(bash "$P" copy-stash "$T/group-a/with-stash" pop '0;x' 2>&1)"
+lacks  "copy-stash: the index is a number"   "$OUT" "NOTICE"
 # A value with no b64: prefix is a literal by design — that is what lets a menu
 # drawn by an older version still be understood. Undecodable base64 behind the
 # prefix is the real error case, and it must not put junk on the clipboard.

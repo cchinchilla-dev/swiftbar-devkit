@@ -197,10 +197,6 @@ write_roots() {
 }
 pretty_path()   { echo "${1/#$HOME/~}"; }
 
-# SwiftBar splits a line on the first | . Git allows | in ref names, so any
-# title built from one has to have it replaced or the whole item is lost.
-safe() { printf '%s' "${1//|/¦}"; }
-
 # Shell-quotes a value only when it needs it. Git forbids whitespace and
 # control characters in a refname but allows ; & $ ( ) ` — and these strings
 # become commands: copied to the clipboard, and written into the runfix
@@ -326,6 +322,25 @@ read_pr() {   # $1=repo  $2=branch -> PR_N PR_URL PR_REVIEW PR_CI PR_DRAFT
   [ "$head" = "$2" ] || { PR_N=""; PR_URL=""; PR_REVIEW=""; PR_CI=""; PR_DRAFT=""; }
 }
 
+# The changed-files list, built from the status call read_state already made:
+# a dirty repo used to run git status a second time just to list them. Each v2
+# line goes back to the short "XY path" form the menu always showed, and only
+# the first MAX_FILES are kept, since that is all the menu lists.
+changed() {   # $1 = porcelain v2 body line -> appended to CHANGED
+  [ "$DIRTY" -le "$MAX_FILES" ] || return 0
+  local l="$1" xy n=0
+  case "$l" in
+    '? '*) CHANGED="$CHANGED?? ${l#? }$NL"; return 0 ;;
+    '1 '*) n=8 ;;   # 1 XY sub mH mI mW hH hI path
+    '2 '*) n=9 ;;   # 2 XY sub mH mI mW hH hI score path<TAB>orig
+    'u '*) n=10 ;;  # u XY sub m1 m2 m3 mW h1 h2 h3 path
+  esac
+  xy="${l:2:2}"; xy="${xy//./ }"
+  while [ "$n" -gt 0 ]; do l="${l#* }"; n=$((n - 1)); done
+  case "$l" in *"$TAB"*) l="${l#*"$TAB"} -> ${l%%"$TAB"*}" ;; esac
+  CHANGED="$CHANGED$xy $l$NL"
+}
+
 # Reads a repo's state into globals.
 read_state() {
   local R="$1"
@@ -335,7 +350,7 @@ read_state() {
   # @{upstream}, status and rev-list — per repo, on every render.
   local ST; ST="$(git -C "$R" status --porcelain=v2 --branch 2>/dev/null)"
 
-  BRANCH=""; UP=""; BEHIND=0; AHEAD=0; UPGONE=""; DIRTY=0; CONFLICTS=0
+  BRANCH=""; UP=""; BEHIND=0; AHEAD=0; UPGONE=""; DIRTY=0; CONFLICTS=0; CHANGED=""
   local HDR="" AB="" line ab
   while IFS= read -r line; do
     case "$line" in
@@ -359,8 +374,8 @@ read_state() {
       # through grep twice afterwards. 1/2 are tracked changes, u is unmerged,
       # ? is untracked — the set plain --porcelain used to print. ! (ignored)
       # is deliberately not counted, matching it.
-      '1 '*|'2 '*|'? '*) DIRTY=$((DIRTY + 1)) ;;
-      'u '*)             DIRTY=$((DIRTY + 1)); CONFLICTS=$((CONFLICTS + 1)) ;;
+      '1 '*|'2 '*|'? '*) DIRTY=$((DIRTY + 1)); changed "$line" ;;
+      'u '*)             DIRTY=$((DIRTY + 1)); CONFLICTS=$((CONFLICTS + 1)); changed "$line" ;;
       *) ;;
     esac
   done <<< "$ST"
@@ -487,11 +502,13 @@ stash_entries() {   # $1 = common git dir, not the repo: in a worktree they diff
   ' "$log"
 }
 
-stash_cmd() {   # $1=index  $2=show|apply|pop
+# Into C, not echoed: called three times per stash entry on every render, and
+# $( ) is a fork each time.
+stash_cmd() {   # $1=index  $2=show|apply|pop -> C
   case "$2" in
-    show)  echo "git stash show -p stash@{$1}" ;;
-    apply) echo "git stash apply stash@{$1}" ;;
-    pop)   echo "git stash pop stash@{$1}" ;;
+    show)      C="git stash show -p stash@{$1}" ;;
+    apply|pop) C="git stash $2 stash@{$1}" ;;
+    *)         C="" ;;
   esac
 }
 
@@ -1061,6 +1078,15 @@ Use 'Push' to create it on origin."
     ok "$(repo_name "$2")" "Copied:  $C"
     exit 0 ;;
 
+  # What a stash entry's item copies, rebuilt from its verb and index.
+  copy-stash)
+    case "$4" in ''|*[!0-9]*) exit 1 ;; esac
+    stash_cmd "$4" "$3"
+    [ -n "$C" ] || exit 1
+    printf '%s\n' "$C" | pbcopy
+    ok "$(repo_name "$2")" "Copied:  $C"
+    exit 0 ;;
+
   copy-all)
     R="$2"; N="$(repo_name "$R")"; read_state "$R"
     CLEAN=""
@@ -1259,7 +1285,7 @@ if ! command -v git >/dev/null 2>&1; then
 fi
 
 SEP=$'\037'
-DATA=(); ALL_PATHS=""; PENDING=0; W_NAME=0; W_BRANCH=0
+DATA=(); CHANGES=(); ALL_PATHS=""; PENDING=0; W_NAME=0; W_BRANCH=0
 N_BEHIND=0; N_AHEAD=0; N_DIRTY=0; N_WARN=0; N_STASH=0; N_BUSY=0; N_CI=0
 STALE=""; ON_BRANCH=""
 
@@ -1360,6 +1386,8 @@ while IFS="$SEP" read -r RPATH RLABEL R; do
   [ ${#SHOWN}  -gt "$W_BRANCH" ] && W_BRANCH=${#SHOWN}
 
   DATA+=("$GROUP$SEP$NAME$SEP$SHOWN$SEP$BEHIND$SEP$AHEAD$SEP$DIRTY$SEP$WARN$SEP$R$SEP$BRANCH$SEP$UP$SEP$STASH$SEP$INPROGRESS$SEP$CONFLICTS$SEP$COMMONDIR$SEP$REMOTE$SEP$FETCH_AGE$SEP$UPGONE$SEP$BROKEN")
+  # Beside DATA, not inside it: a file list holds newlines and any character.
+  CHANGES+=("$CHANGED")
 done <<< "$LIST"
 
 # Background rounds, detached so the menu never waits on the network, at most
@@ -1411,8 +1439,9 @@ if [ -n "$GONE" ]; then
   done <<< "$GONE"
 fi
 
-LAST_GROUP=""
+LAST_GROUP=""; ROWN=0
 for ROW in "${DATA[@]}"; do
+  CHANGED="${CHANGES[$ROWN]}"; ROWN=$((ROWN + 1))
   # noglob: the fields are data, and unquoted expansion was matching them
   # against the plugin's own directory — a repo named re[po] rendered as "rep".
   OLDIFS="$IFS"; IFS="$SEP"; set -f; set -- $ROW; set +f; IFS="$OLDIFS"
@@ -1496,16 +1525,11 @@ for ROW in "${DATA[@]}"; do
   # ---- what is actually changed, not just how much
   if [ "$DIRTY" -gt 0 ]; then
     echo "-----"
-    NF=0
     while IFS= read -r F; do
-      [ -n "$F" ] || continue
-      NF=$((NF + 1))
-      if [ "$NF" -gt "$MAX_FILES" ]; then
-        echo "--  … and $((DIRTY - MAX_FILES)) more | $MONO"
-        break
-      fi
-      echo "--  ${F//|/¦} | $MONO"
-    done <<< "$(git -C "$R" status --porcelain 2>/dev/null)"
+      [ -n "$F" ] && echo "--  ${F//|/¦} | $MONO"
+    done <<< "$CHANGED"
+    # CHANGED holds only the first MAX_FILES; DIRTY knows how many there are.
+    [ "$DIRTY" -gt "$MAX_FILES" ] && echo "--  … and $((DIRTY - MAX_FILES)) more | $MONO"
   fi
 
   # ---- every stash entry with its commands: clicking one copies it
@@ -1516,10 +1540,11 @@ for ROW in "${DATA[@]}"; do
       # A stash message or a file name is free text, and the first | in a line
       # is where SwiftBar's parameters start: "wip | refresh=true" was one.
       echo "--stash@{$IDX} · $AGE · ${MSG//|/¦} | $MONO"
+      # The verb and the index travel, not the command: always spaces in it,
+      # so it was base64 on every render, three forks per item.
       for V in show apply pop; do
-        C="$(stash_cmd "$IDX" "$V")"
-        enc "$C"
-        echo "----$C | bash=\"$SELF\" param1=copy-one param2=\"$R\" param3=$ENC terminal=false sfimage=doc.on.doc $MONO"
+        stash_cmd "$IDX" "$V"
+        echo "----$C | bash=\"$SELF\" param1=copy-stash param2=\"$R\" param3=$V param4=$IDX terminal=false sfimage=doc.on.doc $MONO"
       done
     done <<< "$(stash_entries "$COMMONDIR")"
   fi

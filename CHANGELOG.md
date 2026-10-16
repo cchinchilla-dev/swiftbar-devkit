@@ -16,6 +16,8 @@
   through one writer, `lib/setconfig.py`, instead of five copies. It replaces
   the file in one rename, keeps a symlinked config a symlink, and refuses a key
   that is not a plain variable name.
+- A repository with changes costs one `git status` per refresh instead of two,
+  and stash items carry their verb and index instead of a base64 command.
 
 ### Fixed
 - **Run them in Terminal** ran each suggested line on Return, as written: a
