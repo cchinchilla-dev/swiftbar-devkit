@@ -33,6 +33,10 @@ commit_on() {   # $1=repo  $2=branch  $3=file
 new_repo branches
 commit_on branches feature/login login.txt
 g "$T/group-a/branches" push -q -u origin feature/login
+# One commit past its upstream, so the branch list has an unpushed one to mark.
+echo y > "$T/group-a/branches/login2.txt"
+g "$T/group-a/branches" add .
+g "$T/group-a/branches" commit -qm login2
 commit_on branches release/2.0 rel.txt
 g "$T/group-a/branches" switch -q main
 
@@ -61,3 +65,7 @@ echo change >> "$T/group-a/pending/base.txt"
 # "Open on the remote" has to rewrite.
 new_repo ssh-remote
 g "$T/group-a/ssh-remote" remote set-url origin "git@github.com:acme/app.git"
+
+# ---- a branch checked out in a second worktree, which git refuses to switch
+# to anywhere else.
+g "$T/group-a/branches" worktree add -q -b in-worktree "$T/group-a/side"

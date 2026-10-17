@@ -21,6 +21,11 @@ ROW() { echo "$R" | grep -E "^ +$1 " | head -1; }
 
 lacks "clean: no markers"                "$(ROW clean)"         "↓"
 has   "behind: marker ↓2"                "$(ROW behind)"        "↓2"
+# The submenu under a count lists the commits themselves, newest first.
+SUB() { echo "$R" | awk -v r="$1" '$0 ~ "^ +"r" " {f=1; next} f && /^  [^ -]/ {exit} f'; }
+has   "behind: lists what Update brings"  "$(SUB behind)"  "remote 2 |"
+has   "ahead: lists what Push sends"      "$(SUB ahead)"   "local 1 |"
+equals "diverged: lists both sides"       "$(SUB diverged | grep -cE '^----[0-9a-f]{7,} ')" "2"
 has   "detached: branch shows 'detached'" "$(ROW detached)"     "detached"
 has   "warning text: no upstream"        "$R" "No upstream branch"
 has   "summary counts pending"           "$R" "behind"
@@ -74,7 +79,8 @@ has   "commands for stash@{0}: pop"       "$R" "git stash pop stash@{0}"
 # means "things that need action", and stashing can be deliberate. The badge is
 # compared against the rows carrying an action marker, so the assertion does not
 # depend on how many scenarios fixtures.sh happens to define.
-ACTION="$(echo "$R" | grep -E '^  [a-z][a-z-]+ ' | grep -cE '↓|↑|●|!' | tr -d ' ')"
+# A linked worktree's row starts with ↳.
+ACTION="$(echo "$R" | grep -E '^  (↳ )?[a-z][a-z-]+ ' | grep -cE '↓|↑|●|!' | tr -d ' ')"
 # With nothing pending the first line is " | sfimage=...", with no number: that is 0.
 BADGE="$(echo "$R" | head -1 | sed 's/ *|.*//' | tr -d ' ')"
 equals "the badge ignores stashes"        "${BADGE:-0}" "$ACTION"

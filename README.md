@@ -59,7 +59,11 @@ fix whatever is wrong.
 </p>
 
 - **Branches** local and remote: switch between them, or clear out the ones
-  whose remote is gone. A dirty tree is offered a stash first.
+  whose remote is gone. A dirty tree is offered a stash first. Every local
+  branch shows what it has unpushed, so none gets forgotten.
+- **Worktrees** one click away: a new one per branch, opened in your IDE, marked
+  `↳` in the list and removed again when you are done — never with changes in it.
+- **The commits behind ↓ and ↑**, so you see what Update brings and Push sends.
 - **Stashes** listed one by one, each with its own `show` / `apply` / `pop`.
 - **Half-finished rebases, merges and cherry-picks** are detected, and anything
   that would make them worse is hidden.

@@ -10,6 +10,18 @@
   checks and review, looked up through `gh` every 5 minutes
   (`REPOS_PR_MINUTES`). Failing checks mark the row and count as pending.
 - **CPU, memory and uptime** for every service in the Dev ports bar.
+- The `↓`/`↑` counts open onto the commits themselves, so you see what Update
+  brings and what Push sends before clicking either.
+- **Tracking of every local branch** in Switch branch: `↑N`/`↓N`, `local` when
+  it was never pushed, `gone` when its upstream was deleted. Same `git` call as
+  before.
+- A branch checked out in another worktree is marked `⎇ worktree`, and
+  clicking it opens that worktree instead of a switch git would refuse.
+- **New worktree…** in each repository: a new, local or remote branch checked
+  out beside the main checkout as `<repo>.worktrees/<branch>`, then opened in
+  the IDE. The bar picks it up on the next scan.
+- Linked worktrees are marked `↳` in the list and offer **Remove this
+  worktree…**, which keeps the branch and refuses a worktree holding changes.
 
 ### Changed
 - Every write to `config.sh` — the four bars' Settings and the installer — goes

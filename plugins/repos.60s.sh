@@ -261,6 +261,26 @@ ide_for() {   # $1 = repo path
   if [ -n "$want" ] && [ -d "/Applications/$want.app" ]; then echo "$want"; else echo "$IDE"; fi
 }
 
+# The commits behind a ↓/↑ count, newest first and capped like the file list,
+# so Update and Push are no longer blind. One git log, only when there are any.
+commit_list() {   # $1 = repo  $2 = range  $3 = how many there are
+  local h s
+  while IFS=' ' read -r h s; do
+    [ -n "$h" ] || continue
+    [ "${#s}" -gt 60 ] && s="${s:0:59}…"
+    echo "----$h ${s//|/¦} | $MONO"
+  done <<< "$(git -C "$1" log -n "$MAX_FILES" --format='%h %s' "$2" 2>/dev/null)"
+  [ "$3" -gt "$MAX_FILES" ] && echo "----… and $(($3 - MAX_FILES)) more | $MONO"
+  return 0
+}
+
+# Where a worktree is worked on: the IDE when one is set, Terminal otherwise.
+open_worktree() {   # $1 = title  $2 = notice  $3 = path; does not return
+  ok "$1" "$2"
+  [ -n "$IDE" ] || [ -n "$IDE_CMD" ] && exec "$SELF" ide "$3" "$(ide_for "$3")"
+  open -a Terminal "$3" >/dev/null 2>&1; exit 0
+}
+
 # Commands travel base64-encoded, so neither the quotes in -m "..." nor the &&
 # break SwiftBar's parameter parsing.
 b64()   { printf '%s' "$1" | base64 | tr -d '\n'; }
@@ -970,6 +990,59 @@ Each one asks before it runs, and nothing runs after one fails. Lines with a pla
     ok "$N" "Branch '$NAME' created. Local only: it does not exist on origin yet."
     exit 0 ;;
 
+  # One worktree per branch, all beside the main checkout as
+  # <repo>.worktrees/<branch>, so the scan picks them up like any repository.
+  newworktree)
+    R="$2"; N="$(repo_name "$R")"; read_state "$R"
+    NAME="$(ask "Branch for a new worktree of $N (new, local or on $REMOTE):" "")"
+    [ -z "$NAME" ] && exit 0
+    git -C "$R" check-ref-format --branch "$NAME" >/dev/null 2>&1 \
+      || fail "$N: not a branch name" "'$NAME' cannot be a branch name. Nothing was created."
+    # Typed as origin/x or as x with only origin/x around: a local x tracks it.
+    SRC=""
+    if ! git -C "$R" show-ref --verify --quiet "refs/heads/$NAME"; then
+      if git -C "$R" show-ref --verify --quiet "refs/remotes/$NAME"; then
+        SRC="$NAME"; NAME="${NAME#*/}"
+      elif git -C "$R" show-ref --verify --quiet "refs/remotes/$REMOTE/$NAME"; then
+        SRC="$REMOTE/$NAME"
+      fi
+    fi
+    WT="$(git -C "$R" for-each-ref --format='%(worktreepath)' "refs/heads/$NAME" 2>/dev/null)"
+    [ -n "$WT" ] && open_worktree "$N" "$NAME is already checked out in ${WT/#$HOME/~}. Opening it there." "$WT"
+    # The first entry is the main checkout, also when this is a linked worktree.
+    MAIN="$(git -C "$R" worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p')"
+    DIR="${MAIN:-$R}.worktrees/${NAME//\//-}"
+    [ -e "$DIR" ] && fail "$N: the folder is taken" "${DIR/#$HOME/~} already exists. Nothing was created."
+    if git -C "$R" show-ref --verify --quiet "refs/heads/$NAME"; then
+      OUT="$(git -C "$R" worktree add "$DIR" "$NAME" 2>&1)"
+    elif [ -n "$SRC" ]; then
+      OUT="$(git -C "$R" worktree add --track -b "$NAME" "$DIR" "$SRC" 2>&1)"
+    else
+      OUT="$(git -C "$R" worktree add -b "$NAME" "$DIR" 2>&1)"
+    fi
+    [ $? -ne 0 ] && fail "$N: could not create the worktree" "$OUT"
+    open_worktree "$N" "Worktree for $NAME in ${DIR/#$HOME/~}." "$DIR" ;;
+
+  # A linked worktree only, never the main checkout, and never --force: git
+  # refuses one holding changes or untracked files, and that refusal is the
+  # point. The branch and its commits stay; only the folder goes.
+  removeworktree)
+    R="$2"; N="$(repo_name "$R")"; read_state "$R"
+    [ "$GITDIR" != "$COMMONDIR" ] || fail "$N: not a linked worktree" \
+"This is the main checkout of the repository. Nothing was removed."
+    confirm "Remove the worktree $N?" \
+"The folder ${R/#$HOME/~} is deleted. The branch ${BRANCH:-(detached HEAD)} and its commits stay in the repository." || exit 0
+    # From the main checkout: this folder is the one about to disappear.
+    MAIN="$(git -C "$R" worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p')"
+    [ -n "$MAIN" ] || fail "$N: could not remove the worktree" "The main checkout could not be found."
+    OUT="$(git -C "$MAIN" worktree remove "$R" 2>&1)" || fail "$N: could not remove the worktree" "$OUT"
+    # Also forgets worktrees whose folder was deleted by hand.
+    git -C "$MAIN" worktree prune >/dev/null 2>&1
+    # The last one out takes <repo>.worktrees with it; rmdir leaves a non-empty one.
+    case "${R%/*}" in *.worktrees) rmdir "${R%/*}" 2>/dev/null ;; esac
+    ok "$N" "Worktree removed.${BRANCH:+ The branch $BRANCH is still there.}"
+    exit 0 ;;
+
   rename)
     R="$2"; dec "$3"; OLD="$DEC"; N="$(repo_name "$R")"
     [ -z "$OLD" ] && fail "$N: cannot rename" \
@@ -1172,6 +1245,15 @@ Use 'Push' to create it on origin."
 
   switch)
     R="$2"; dec "$3"; TARGET="$DEC"; N="$(repo_name "$R")"; read_state "$R"
+    # A branch is checked out in one worktree at most, and git refuses it
+    # anywhere else. Whoever clicks it wants to work on it, so open the worktree
+    # that has it — before the stash below, which would be for nothing.
+    L="$TARGET"
+    git -C "$R" show-ref --verify --quiet "refs/heads/$L" || L="${TARGET#*/}"
+    WT="$(git -C "$R" for-each-ref --format='%(worktreepath)' "refs/heads/$L" 2>/dev/null)"
+    if [ -n "$WT" ] && [ "$L" != "$BRANCH" ]; then
+      open_worktree "$N" "$L is checked out in ${WT/#$HOME/~}. Opening it there." "$WT"
+    fi
     # Switching with a dirty tree either fails or drags the changes along, and
     # neither is what someone clicking a branch name expects. Offer the way out
     # rather than just refusing: stashing is what you were going to do anyway.
@@ -1357,9 +1439,19 @@ while IFS="$SEP" read -r RPATH RLABEL R; do
   # nothing and the group header became the whole absolute path.
   REL="${R#"$RPATH"/}"
   case "$REL" in */*) GROUP="${REL%/*}" ;; *) GROUP="${RPATH%/}"; GROUP="${GROUP##*/}" ;; esac
+  # A worktree made by New worktree… joins its main checkout's group: by path
+  # it sorts right below it, so a group of its own split the parent's in two.
+  case "$GROUP" in
+    */*.worktrees) GROUP="${GROUP%/*}" ;;
+    *.worktrees)   GROUP="${RPATH%/}"; GROUP="${GROUP##*/}" ;;
+  esac
   [ -n "$RLABEL" ] && GROUP="$RLABEL / $GROUP"
 
   read_state "$R"
+  # A linked worktree keeps its git dir apart from the shared one; a plain
+  # repository or the main checkout has the two in the same place. ↳, not ⎇:
+  # Menlo has no ⎇, and the fallback font is wider and breaks the columns.
+  LINKED=""; [ "$GITDIR" != "$COMMONDIR" ] && { LINKED=1; NAME="↳ $NAME"; }
   read_pr "$R" "$BRANCH"
   # What the background rounds will look at: tracked repos whose last fetch is
   # older than the interval, and every repo that is on a branch.
@@ -1385,7 +1477,7 @@ while IFS="$SEP" read -r RPATH RLABEL R; do
   [ ${#NAME}   -gt "$W_NAME" ]   && W_NAME=${#NAME}
   [ ${#SHOWN}  -gt "$W_BRANCH" ] && W_BRANCH=${#SHOWN}
 
-  DATA+=("$GROUP$SEP$NAME$SEP$SHOWN$SEP$BEHIND$SEP$AHEAD$SEP$DIRTY$SEP$WARN$SEP$R$SEP$BRANCH$SEP$UP$SEP$STASH$SEP$INPROGRESS$SEP$CONFLICTS$SEP$COMMONDIR$SEP$REMOTE$SEP$FETCH_AGE$SEP$UPGONE$SEP$BROKEN")
+  DATA+=("$GROUP$SEP$NAME$SEP$SHOWN$SEP$BEHIND$SEP$AHEAD$SEP$DIRTY$SEP$WARN$SEP$R$SEP$BRANCH$SEP$UP$SEP$STASH$SEP$INPROGRESS$SEP$CONFLICTS$SEP$COMMONDIR$SEP$REMOTE$SEP$FETCH_AGE$SEP$UPGONE$SEP$BROKEN$SEP$LINKED")
   # Beside DATA, not inside it: a file list holds newlines and any character.
   CHANGES+=("$CHANGED")
 done <<< "$LIST"
@@ -1450,7 +1542,7 @@ for ROW in "${DATA[@]}"; do
   # so a branch called fea|ture cut the row short and spilled the rest into
   # parameters. Substitute in every field that reaches a title.
   GROUP="${GROUP//|/¦}"; NAME="${NAME//|/¦}"; SHOWN="${SHOWN//|/¦}"; WARN="${WARN//|/¦}"
-  BRANCH="$9"; UP="${10}"; STASH="${11:-0}"; INPROGRESS="${12:-}"; CONFLICTS="${13:-0}"; COMMONDIR="${14:-}"; REMOTE="${15:-origin}"; FETCH_AGE="${16:-}"; UPGONE="${17:-}"; BROKEN="${18:-}"
+  BRANCH="$9"; UP="${10}"; STASH="${11:-0}"; INPROGRESS="${12:-}"; CONFLICTS="${13:-0}"; COMMONDIR="${14:-}"; REMOTE="${15:-origin}"; FETCH_AGE="${16:-}"; UPGONE="${17:-}"; BROKEN="${18:-}"; LINKED="${19:-}"
 
   read_pr "$R" "$BRANCH"
 
@@ -1483,8 +1575,14 @@ for ROW in "${DATA[@]}"; do
   # ---- submenu: diagnosis first
   [ -n "$WARN" ] && echo "--! $WARN | $MONO"
   [ "$CONFLICTS" -gt 0 ] && echo "--⚠ $(plural "$CONFLICTS" "file with conflicts" "files with conflicts") | $MONO"
-  [ "$BEHIND" -gt 0 ] && echo "--↓ $(plural "$BEHIND" "commit to pull" "commits to pull") | $MONO"
-  [ "$AHEAD"  -gt 0 ] && echo "--↑ $(plural "$AHEAD" "commit to push" "commits to push") | $MONO"
+  if [ "$BEHIND" -gt 0 ]; then
+    echo "--↓ $(plural "$BEHIND" "commit to pull" "commits to pull") | $MONO"
+    commit_list "$R" "HEAD..$UP" "$BEHIND"
+  fi
+  if [ "$AHEAD" -gt 0 ]; then
+    echo "--↑ $(plural "$AHEAD" "commit to push" "commits to push") | $MONO"
+    commit_list "$R" "$UP..HEAD" "$AHEAD"
+  fi
   [ "$DIRTY"  -gt 0 ] && echo "--● $(plural "$DIRTY" "file changed" "files changed") | $MONO"
   [ "$STASH"  -gt 0 ] && echo "--⚑ $(plural "$STASH" "stashed change" "stashed changes") | $MONO"
   if [ "$BEHIND" -eq 0 ] && [ "$AHEAD" -eq 0 ] && [ "$DIRTY" -eq 0 ] && [ -z "$WARN" ] && [ "$STASH" -eq 0 ] \
@@ -1603,29 +1701,41 @@ for ROW in "${DATA[@]}"; do
   # plain wrong with two remotes: origin/main and upstream/main are different
   # branches that both shorten to "main".
   #
-  # One for-each-ref for both, full refname so the remote can be split off.
+  # One for-each-ref for both, full refname so the remote can be split off, and
+  # each local branch's tracking in the same call: a branch left unpushed while
+  # you work on another is invisible from the row, which shows only HEAD.
+  # SEP, not a tab: read collapses runs of whitespace, so an empty upstream
+  # would shift the track into its place.
   echo "--Switch branch"
-  REFS="$(git -C "$R" for-each-ref --format='%(refname)' --sort=-committerdate refs/heads refs/remotes 2>/dev/null)"
+  REFS="$(git -C "$R" for-each-ref --format='%(refname)%1f%(upstream)%1f%(upstream:track)%1f%(worktreepath)' --sort=-committerdate refs/heads refs/remotes 2>/dev/null)"
 
   # Real nesting, one level per group. Faking it with indentation and separators
   # does not work: the dash count IS the depth, so a 5-dash separator inside a
   # 4-dash list belongs to the parent menu and scrambles everything after it.
   echo "----local"
-  while IFS= read -r ref; do
+  while IFS="$SEP" read -r ref up track wt; do
     case "$ref" in refs/heads/*) ;; *) continue ;; esac
     b="${ref#refs/heads/}"
     if [ "$b" = "$BRANCH" ]; then
       echo "------${b//|/¦}  ✓ | $MONO"
     else
+      # track is "[ahead 2, behind 1]", "[gone]" or empty when in sync.
+      mk=""
+      case "$track" in *ahead*)  n="${track#*ahead }";  mk="$mk ↑${n%%[],]*}" ;; esac
+      case "$track" in *behind*) n="${track#*behind }"; mk="$mk ↓${n%%]*}" ;; esac
+      [ "$track" = "[gone]" ] && mk=" gone"
+      [ -z "$up" ] && mk=" local"
+      # Checked out in another worktree: the click opens that one instead.
+      [ -n "$wt" ] && mk="$mk ⎇ worktree"
       enc "$b"
-      echo "------${b//|/¦} | bash=\"$SELF\" param1=switch param2=\"$R\" param3=$ENC terminal=false refresh=true"
+      echo "------${b//|/¦}${mk:+ $mk} | bash=\"$SELF\" param1=switch param2=\"$R\" param3=$ENC terminal=false refresh=true"
     fi
   done <<< "$REFS"
 
   # The remote names are already in the refs just fetched, so asking git for
   # them again is a process per repo for something we are holding.
   REMOTES=""
-  while IFS= read -r ref; do
+  while IFS="$SEP" read -r ref _; do
     case "$ref" in refs/remotes/*) ;; *) continue ;; esac
     rest="${ref#refs/remotes/}"
     rn="${rest%%/*}"
@@ -1636,7 +1746,7 @@ for ROW in "${DATA[@]}"; do
   while IFS= read -r RNAME; do
     [ -n "$RNAME" ] || continue
     HEADER=""
-    while IFS= read -r ref; do
+    while IFS="$SEP" read -r ref _; do
       case "$ref" in refs/remotes/"$RNAME"/*) ;; *) continue ;; esac
       b="${ref#refs/remotes/$RNAME/}"
       # refs/remotes/<remote>/HEAD is a symbolic ref, not a branch.
@@ -1649,10 +1759,11 @@ for ROW in "${DATA[@]}"; do
 
   # ---- deleting, local only: removing a remote branch is a push, not a click
   DELETABLE=""
-  while IFS= read -r ref; do
+  while IFS="$SEP" read -r ref _ _ wt; do
     case "$ref" in refs/heads/*) ;; *) continue ;; esac
     b="${ref#refs/heads/}"
-    [ "$b" = "$BRANCH" ] && continue
+    # Checked out here or in another worktree: git refuses to delete either.
+    [ "$b" = "$BRANCH" ] || [ -n "$wt" ] && continue
     DELETABLE="$DELETABLE$b"$'\n'
   done <<< "$REFS"
   if [ -n "$DELETABLE" ]; then
@@ -1668,6 +1779,9 @@ for ROW in "${DATA[@]}"; do
   echo "--Delete branches whose upstream is gone… | bash=\"$SELF\" param1=prunegone param2=\"$R\" terminal=false refresh=true"
   echo "-----"
   echo "--New branch… | bash=\"$SELF\" param1=newbranch param2=\"$R\" terminal=false refresh=true"
+  echo "--New worktree… | bash=\"$SELF\" param1=newworktree param2=\"$R\" terminal=false refresh=true"
+  [ -n "$LINKED" ] && \
+    echo "--Remove this worktree… | bash=\"$SELF\" param1=removeworktree param2=\"$R\" terminal=false refresh=true"
   enc "$BRANCH"
   echo "--Rename branch… | bash=\"$SELF\" param1=rename param2=\"$R\" param3=$ENC terminal=false refresh=true"
   fi
