@@ -25,7 +25,7 @@ cd swiftbar-devkit && bash install.sh
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/repos-dark.png">
-    <img src="docs/screenshots/repos-light.png" alt="The four bars in the menu bar, with the Repos menu open on a branch whose pull request has failing checks" width="750">
+    <img src="docs/screenshots/repos-light.png" alt="The four bars in the menu bar, with the Repos menu open: every repository, its branch and what needs doing" width="750">
   </picture>
 </p>
 
@@ -53,10 +53,11 @@ fix whatever is wrong.
 
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/stashes-dark.png">
-    <img src="docs/screenshots/stashes-light.png" alt="A repository opened from the Repos menu, showing its stashes and branch actions" width="815">
+    <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/diverged-dark.png">
+    <img src="docs/screenshots/diverged-light.png" alt="A repository both behind and ahead, opened on the commit it would pull, with the commands that reconcile it" width="815">
   </picture>
 </p>
+<p align="center"><sub>Behind and ahead at once: the commit Update would bring, and the commands that sort it out.</sub></p>
 
 - **Branches** local and remote: switch between them, or clear out the ones
   whose remote is gone. A dirty tree is offered a stash first. Every local
@@ -77,6 +78,22 @@ fix whatever is wrong.
 - **Actions guard themselves**: update refuses on a dirty tree, push refuses
   when the remote is ahead, branch deletion uses the form git can refuse, and
   nothing that rewrites history starts mid-operation.
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/branches-dark.png">
+    <img src="docs/screenshots/branches-light.png" alt="The branch list of a repository: each local branch with its tracking, one checked out in a worktree" width="815">
+  </picture>
+</p>
+<p align="center"><sub>Every local branch says what it has unpushed; a worktree sits right under its repository.</sub></p>
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/stashes-dark.png">
+    <img src="docs/screenshots/stashes-light.png" alt="A repository opened from the Repos menu, showing its stashes and branch actions" width="700">
+  </picture>
+</p>
+<p align="center"><sub>Stashes one by one, each with its own <code>show</code> / <code>apply</code> / <code>pop</code>.</sub></p>
 
 ## Dev ports
 
