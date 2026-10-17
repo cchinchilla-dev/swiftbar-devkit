@@ -84,6 +84,28 @@ equals "bun run names the script"     "$(name_of bun-run)"     "server.ts"
 equals "deno run names the script"    "$(name_of deno-run)"    "api/main.ts"
 equals "deno --port takes its value"  "$(name_of deno-port)"   "srv.ts"
 
+section "THE BRANCH A SERVICE RUNS FROM"
+# Read from HEAD files, so plain directories stand in for repositories.
+G="$TMP/git"; mkdir -p "$G/repo/.git" "$G/repo/svc/sub" "$G/main/.git/worktrees/wt" "$G/wt" "$G/det/.git" "$G/none"
+echo "ref: refs/heads/feature/login" > "$G/repo/.git/HEAD"
+echo "ref: refs/heads/hotfix/vat" > "$G/main/.git/worktrees/wt/HEAD"
+echo "gitdir: $G/main/.git/worktrees/wt" > "$G/wt/.git"
+echo "4f9c2a1d0e8b7c6a5f4e3d2c1b0a9f8e7d6c5b4a" > "$G/det/.git/HEAD"
+BRANCHES="$(python3 - "$PLUGIN" "$G" <<'PY'
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("dp", sys.argv[1])
+m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+g = sys.argv[2]
+for case, d in [("sub", "repo/svc/sub"), ("worktree", "wt"), ("detached", "det"), ("none", "none")]:
+    print("%s %s" % (case, m.git_branch(g + "/" + d)))
+PY
+)"
+branch_of() { echo "$BRANCHES" | grep "^$1 " | cut -d' ' -f2-; }
+equals "found from a folder inside the repo" "$(branch_of sub)"      "feature/login"
+equals "a worktree reads its own HEAD"       "$(branch_of worktree)" "hotfix/vat"
+equals "a bare commit says detached"         "$(branch_of detached)" "detached"
+equals "outside a repository, nothing"       "$(branch_of none)"     "None"
+
 section "A KILL VERIFIES WHAT IT KILLS"
 # The identity is built the way the PLUGIN builds it — Python .strip() over
 # `ps -o pid=,lstart=`. Re-deriving it in the shell keeps the shell's own

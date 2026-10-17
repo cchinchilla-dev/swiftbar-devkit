@@ -88,6 +88,18 @@ has   "the unmerged one is kept"            "$(branches_of "$G")" "unmerged-gone
 
 OUT="$(REPOS_CONFIRM=yes bash "$P" prunegone "$T/group-a/untouched" 2>&1)"
 
+section "DELETE MERGED BRANCHES"
+M="$T/group-a/merged"
+BEFORE="$(branches_of "$M")"
+REPOS_CONFIRM=no bash "$P" prunemerged "$M" >/dev/null 2>&1
+equals "cancelling deletes nothing"         "$(branches_of "$M")" "$BEFORE"
+OUT="$(bash "$P" prunemerged "$M" 2>&1)"
+lacks "the merged one is gone"              "$(branches_of "$M")" "done "
+has   "the one holding work is kept"        "$(branches_of "$M")" "wip"
+has   "and main itself stays"               "$(branches_of "$M")" "main"
+OUT="$(bash "$P" prunemerged "$M" 2>&1)"
+has   "a second run finds nothing"          "$OUT" "No branches merged into"
+
 section "NEW WORKTREE"
 # Beside the main checkout as <repo>.worktrees/<branch>, a slash flattened.
 W="$B.worktrees"

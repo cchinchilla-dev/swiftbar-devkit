@@ -91,6 +91,7 @@ LSOF = "/usr/sbin/lsof"
 PS = "/bin/ps"
 MONO = "font=Menlo size=11"
 MAX_CMD = 110          # command line trimmed to this in the submenu
+MAX_BRANCH = 32        # branch shown beside the service name, trimmed to this
 
 # Debug ports: opened by the IDE, not by the application. A Java service
 # started in debug mode listens on 5005 on top of its own, and since 5005 is
@@ -671,6 +672,43 @@ def project_root(start, runtime):
     return None, None
 
 
+def git_branch(start):
+    """Branch checked out where the service runs, or None outside a repository.
+
+    Read from HEAD rather than asked of git: the bar redraws every few seconds
+    and a process per service for one word is not worth it. A worktree's .git
+    is a file naming its real git dir, where its own HEAD lives.
+    """
+    if not start or not os.path.isdir(start):
+        return None
+    home = os.path.expanduser("~")
+    current = os.path.realpath(start)
+    for _ in range(LEVELS_UP):
+        dot = os.path.join(current, ".git")
+        if os.path.isdir(dot):
+            gitdir = dot
+            break
+        if os.path.isfile(dot):
+            line = (_read(dot) or "").strip()
+            if not line.startswith("gitdir:"):
+                return None
+            gitdir = os.path.join(current, line[len("gitdir:"):].strip())
+            break
+        parent = os.path.dirname(current)
+        if parent == current or current == home:
+            return None
+        current = parent
+    else:
+        return None
+    try:
+        head = (_read(os.path.join(gitdir, "HEAD")) or "").strip()
+    except OSError:
+        return None
+    if head.startswith("ref: refs/heads/"):
+        return head[len("ref: refs/heads/"):]
+    return "detached" if head else None
+
+
 def script_dir(tokens, runtime):
     """Directory of the running script, if it is an absolute path."""
     # Not for Go: `go run` builds into a temp dir, so the binary's location
@@ -785,6 +823,10 @@ def main():
         ordered = sorted(port_set)
         useful = [p for p in ordered if p not in DEBUG_PORTS]
         name, project = app_name(runtime, line, cwds.get(pid))
+        try:
+            branch = git_branch(project or cwds.get(pid))
+        except Exception:
+            branch = None
         # The interpreter's directory says nothing the rows above do not, and
         # the Command Line Tools' Python runs to ninety characters of it before
         # the script even appears. Matched on comm, so a path with spaces in it
@@ -797,6 +839,7 @@ def main():
             "runtime": runtime,
             "name": name,
             "project": project,
+            "branch": branch,
             "ports": ordered,
             "primary": useful[0] if useful else ordered[0],
             "origin": came_from,
@@ -826,7 +869,13 @@ def main():
 
     for s in services:
         extra = " +{}".format(len(s["ports"]) - 1) if len(s["ports"]) > 1 else ""
-        print("{}{}  {}".format(s["primary"], extra, clean(s["name"])))
+        # The branch it runs from: a dev server left on another branch than the
+        # one you are editing explains a lot of "my change does nothing".
+        branch = s["branch"] or ""
+        if len(branch) > MAX_BRANCH:
+            branch = branch[:MAX_BRANCH - 1] + "…"
+        print("{}{}  {}{}".format(s["primary"], extra, clean(s["name"]),
+                                  "  ·  " + clean(branch) if branch else ""))
 
         detail = "{} · PID {}".format(s["runtime"], s["pid"])
         if s["origin"]:

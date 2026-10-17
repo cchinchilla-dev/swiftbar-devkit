@@ -892,6 +892,59 @@ Delete those by hand if you are sure."
     fi
     exit 0 ;;
 
+  # Deletes local branches already merged into the remote's main branch, the
+  # leftovers prunegone misses while their remote copy is still there. Same -d
+  # as everywhere: git keeps any branch it does not see merged.
+  prunemerged)
+    R="$2"; N="$(repo_name "$R")"; read_state "$R"
+    [ -n "$INPROGRESS" ] && fail "$N: cannot clean up" \
+"A $INPROGRESS is in progress. Finish or abort it first. Nothing was touched."
+    # Where "merged" points: the remote's own HEAD, which a clone sets, or the
+    # usual names when it was never set.
+    BASE="$(git -C "$R" symbolic-ref --quiet --short "refs/remotes/$REMOTE/HEAD" 2>/dev/null)"
+    if [ -z "$BASE" ]; then
+      for c in "$REMOTE/main" "$REMOTE/master" main master; do
+        git -C "$R" rev-parse --verify --quiet "$c^{commit}" >/dev/null 2>&1 && { BASE="$c"; break; }
+      done
+    fi
+    [ -n "$BASE" ] || fail "$N: cannot clean up" "No main branch found to compare with. Nothing was touched."
+    MERGED=""; NMERGED=0
+    while IFS="$TAB" read -r b wt; do
+      [ -n "$b" ] || continue
+      # Not the main branch itself, nor one checked out here or in a worktree.
+      [ "$b" = "${BASE#"$REMOTE"/}" ] || [ "$b" = "$BRANCH" ] || [ -n "$wt" ] && continue
+      MERGED="$MERGED$b"$'\n'; NMERGED=$((NMERGED + 1))
+    done <<< "$(git -C "$R" for-each-ref --merged "$BASE" --format="%(refname:short)$TAB%(worktreepath)" refs/heads 2>/dev/null)"
+    [ "$NMERGED" -eq 0 ] && { ok "$N" "No branches merged into $BASE."; exit 0; }
+    confirm "Delete $(plural "$NMERGED" "branch" "branches") in $N?" \
+"Already merged into $BASE:
+
+$(printf '%s' "$MERGED" | sed 's/^/  · /')
+
+Anything git does not see as merged is refused and left alone." || exit 0
+    DELETED=""; KEPT=""
+    while IFS= read -r b; do
+      [ -n "$b" ] || continue
+      if git -C "$R" branch -d "$b" >/dev/null 2>&1; then
+        DELETED="$DELETED  · $b"$'\n'
+      else
+        KEPT="$KEPT  · $b"$'\n'
+      fi
+    done <<< "$MERGED"
+    NDEL="$(printf '%s' "$DELETED" | grep -c .)"
+    if [ -n "$KEPT" ]; then
+      info "$N: $NDEL deleted, $(printf '%s' "$KEPT" | grep -c .) kept" \
+"Deleted:
+$DELETED
+Kept, because git does not see them merged into their upstream or into the
+branch you are on:
+$KEPT
+Delete those by hand if you are sure."
+    else
+      ok "$N" "$(plural "$NDEL" "branch" "branches") deleted."
+    fi
+    exit 0 ;;
+
   # Opens the current branch on the forge. Works out the web URL from the
   # remote, which may be ssh or https.
   browse)
@@ -1777,6 +1830,7 @@ for ROW in "${DATA[@]}"; do
 
   echo "-----"
   echo "--Delete branches whose upstream is gone… | bash=\"$SELF\" param1=prunegone param2=\"$R\" terminal=false refresh=true"
+  echo "--Delete merged branches… | bash=\"$SELF\" param1=prunemerged param2=\"$R\" terminal=false refresh=true"
   echo "-----"
   echo "--New branch… | bash=\"$SELF\" param1=newbranch param2=\"$R\" terminal=false refresh=true"
   echo "--New worktree… | bash=\"$SELF\" param1=newworktree param2=\"$R\" terminal=false refresh=true"

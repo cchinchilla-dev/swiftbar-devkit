@@ -60,7 +60,7 @@ fix whatever is wrong.
 <p align="center"><sub>Behind and ahead at once: the commit Update would bring, and the commands that sort it out.</sub></p>
 
 - **Branches** local and remote: switch between them, or clear out the ones
-  whose remote is gone. A dirty tree is offered a stash first. Every local
+  whose remote is gone or that are already merged. A dirty tree is offered a stash first. Every local
   branch shows what it has unpushed, so none gets forgotten.
 - **Worktrees** one click away: a new one per branch, opened in your IDE, marked
   `↳` in the list and removed again when you are done — never with changes in it.
@@ -103,7 +103,7 @@ system daemons are filtered out.
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/devports-dark.png">
-    <img src="docs/screenshots/devports-light.png" alt="The Dev ports menu listing services by project name, one opened with its CPU, memory and uptime" width="498">
+    <img src="docs/screenshots/devports-light.png" alt="The Dev ports menu listing services by project name and branch, one opened with its CPU, memory and uptime" width="498">
   </picture>
 </p>
 
@@ -111,6 +111,8 @@ system daemons are filtered out.
   called `main.py`.
 - **Java, Python, Node, Bun, Deno, Go.** Debug ports labelled and demoted.
 - **What each one costs**: CPU, memory and how long it has been up.
+- **The branch it runs from**, beside its name — for when a change seems to do
+  nothing because the server is still on another branch.
 - **Open, copy or kill**: the port in a browser, the PID on the clipboard, the
   project in your IDE.
 

@@ -10,6 +10,10 @@
   checks and review, looked up through `gh` every 5 minutes
   (`REPOS_PR_MINUTES`). Failing checks mark the row and count as pending.
 - **CPU, memory and uptime** for every service in the Dev ports bar.
+- **The branch each service runs from**, beside its name in the Dev ports bar,
+  read from `.git/HEAD` without starting a process.
+- **Delete merged branches…** in the Repos bar: local branches already merged
+  into the remote's main branch, with the same `-d` that refuses anything else.
 - The `↓`/`↑` counts open onto the commits themselves, so you see what Update
   brings and what Push sends before clicking either.
 - **Tracking of every local branch** in Switch branch: `↑N`/`↓N`, `local` when

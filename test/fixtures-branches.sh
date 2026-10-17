@@ -56,6 +56,15 @@ g "$T/group-a/gone" push -q origin --delete merged-gone
 g "$T/group-a/gone" push -q origin --delete unmerged-gone
 g "$T/group-a/gone" fetch -q --prune
 
+# ---- merged: one branch already in main on the remote, one still holding work.
+new_repo merged
+commit_on merged done d.txt
+g "$T/group-a/merged" switch -q main
+g "$T/group-a/merged" merge -q --no-ff -m "merge done" done
+g "$T/group-a/merged" push -q
+commit_on merged wip w.txt
+g "$T/group-a/merged" switch -q main
+
 # ---- clean and pending: for the "only what needs attention" filter.
 new_repo untouched
 new_repo pending
