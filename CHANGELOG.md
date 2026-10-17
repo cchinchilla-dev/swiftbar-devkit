@@ -2,85 +2,39 @@
 
 ## [Unreleased]
 
-### Added
-- **Background fetch** in the Repos bar, every 30 minutes by default
-  (`REPOS_AUTO_FETCH_MINUTES`), so behind/ahead stay current without a click.
-  It never asks for a password: a remote that wants one is skipped.
-- **Pull requests** in the Repos bar: the open PR for each branch, with its
-  checks and review, looked up through `gh` every 5 minutes
-  (`REPOS_PR_MINUTES`). Failing checks mark the row and count as pending.
-- **CPU, memory and uptime** for every service in the Dev ports bar.
-- **The branch each service runs from**, beside its name in the Dev ports bar,
-  read from `.git/HEAD` without starting a process.
-- **Delete merged branches…** in the Repos bar: local branches already merged
-  into the remote's main branch, with the same `-d` that refuses anything else.
-- The `↓`/`↑` counts open onto the commits themselves, so you see what Update
-  brings and what Push sends before clicking either.
-- **Tracking of every local branch** in Switch branch: `↑N`/`↓N`, `local` when
-  it was never pushed, `gone` when its upstream was deleted. Same `git` call as
-  before.
-- A branch checked out in another worktree is marked `⎇ worktree`, and
-  clicking it opens that worktree instead of a switch git would refuse.
-- **New worktree…** in each repository: a new, local or remote branch checked
-  out beside the main checkout as `<repo>.worktrees/<branch>`, then opened in
-  the IDE. The bar picks it up on the next scan.
-- Linked worktrees are marked `↳` in the list and offer **Remove this
-  worktree…**, which keeps the branch and refuses a worktree holding changes.
-
-### Changed
-- Every write to `config.sh` — the four bars' Settings and the installer — goes
-  through one writer, `lib/setconfig.py`, instead of five copies. It replaces
-  the file in one rename, keeps a symlinked config a symlink, and refuses a key
-  that is not a plain variable name.
-- A repository with changes costs one `git status` per refresh instead of two,
-  and stash items carry their verb and index instead of a base64 command.
-
-### Fixed
-- **Run them in Terminal** ran each suggested line on Return, as written: a
-  commit with `"..."` as its message, and `--abort` straight after a
-  `--continue` that stopped on a conflict. Each line now asks `[y/N]`, a
-  failure ends the sequence, and a line with a placeholder is never run.
-- Settings written from the Repos and Colima menus were stored unescaped in a
-  file every bar sources: a `$` in a folder name was expanded away, and a
-  `$(…)` would have run on every refresh.
-- A `|` in a stash message, a file name, a group or a remote name spilled into
-  SwiftBar's parameters.
-- A scan root that is a symlink, or whose path holds `[ ]`, and a root that no
-  longer exists all read "All up to date · 0 repos". The missing root is now
-  named, with Settings still on hand to remove it.
-- A worktree whose main repository moved was shown as a detached HEAD, with
-  advice about commits that would be lost.
-- `zsh install.sh` ignored which bars you picked and handed Homebrew every
-  formula as one name.
-- Rows with an icon left their neighbours indented on macOS 26, which lines a
-  whole menu section up on its icons.
-
-### Changed
-- Stopping or restarting the Colima VM or its service, and restarting
-  llama-swap, now ask first: everything running goes down with them.
-- The Repos bar walks each root once instead of three times, and stays out of
-  `.git`. Colima asks Docker for its containers once per refresh, llama-swap
-  reads every model's state in one `jq`.
-- The ports bar shows the interpreter by name, not by its full path.
-- New screenshots, in light and dark.
-
-## [0.1.0] - 2026-08-23
+## [0.1.0] - 2026-10-17
 
 First public release. Four SwiftBar bars, an installer, and a test suite.
 
 ### Added
 - **Repos bar** — every repository under the configured roots, grouped by
-  folder, with the exact commands that resolve whatever is wrong. Branch
-  listing and switching (local and remote-tracking), deletion of branches whose
-  upstream is gone, stashes listed one by one with their own `show` / `apply` /
-  `pop`, detection of half-finished rebases, merges and cherry-picks, fetch
-  freshness, parallel fetch eight at a time, an optional filter that hides
-  repositories that are up to date, and "open in your IDE or on the remote"
-  with the IDE chosen per project type.
+  folder, with the exact commands that resolve whatever is wrong, and a
+  **Run them in Terminal** that asks before each line.
+  - **Branches**: listing and switching, local and remote-tracking, with every
+    local branch's tracking (`↑N`/`↓N`, `local`, `gone`); deletion of branches
+    whose upstream is gone or that are already merged.
+  - **Worktrees**: **New worktree…** checks a branch out beside the main
+    checkout as `<repo>.worktrees/<branch>` and opens it in the IDE; linked
+    worktrees sit under their repository, marked `↳`, and can be removed again.
+    A branch open in another worktree opens that worktree instead of a switch
+    git would refuse.
+  - **The commits behind ↓ and ↑**, so you see what Update brings and what
+    Push sends before clicking either.
+  - **Pull requests** for the branch you are on, with their checks and review,
+    looked up through `gh` every 5 minutes (`REPOS_PR_MINUTES`). Failing checks
+    mark the row.
+  - **Background fetch** every 30 minutes (`REPOS_AUTO_FETCH_MINUTES`), never
+    asking for a password, plus a manual fetch of everything eight at a time.
+  - Stashes listed one by one with their own `show` / `apply` / `pop`;
+    detection of half-finished rebases, merges and cherry-picks; fetch
+    freshness; an optional filter that hides repositories that are up to date;
+    and "open in your IDE or on the remote" with the IDE chosen per project
+    type.
 - **Dev ports bar** — Java, Python, Node, Bun, Deno and Go services holding a
-  local port, named after their project rather than their entry point, with
-  debug ports labelled and demoted. Kill, force-kill and batch kill, plus
-  copying the PID or `localhost:<port>` and opening the project.
+  local port, named after their project rather than their entry point, with the
+  branch each one runs from, its CPU, memory and uptime, and debug ports
+  labelled and demoted. Kill, force-kill and batch kill, plus copying the PID
+  or `localhost:<port>` and opening the project.
 - **Colima bar** — containers with status, logs, a shell, clickable published
   ports and the ID on the clipboard; Compose projects; image and VM disk usage
   with a warning threshold; the Homebrew service; and a repair for the registry
@@ -91,16 +45,20 @@ First public release. Four SwiftBar bars, an installer, and a test suite.
   their dependencies (`colima`, `llama-swap`, `llama.cpp`, `jq`) through
   Homebrew. It never uninstalls anything.
 - **One config file** shared by every bar, `config.example.sh`, read by both the
-  shell bars and the Python one.
+  shell bars and the Python one, and editable from each bar's Settings.
 - **Test suite** — fixture repositories built from scratch on each run, and
   stubbed `colima`, `docker` and `curl`, so every state is reachable without
   touching the machine it runs on.
 
 ### Notes on behaviour
 - Everything destructive confirms first, names what it is about to affect, and
-  defaults to Cancel: killing processes, deleting branches, removing containers,
-  stopping the model server.
+  defaults to Cancel: killing processes, deleting branches, removing containers
+  and worktrees, stopping or restarting the Colima VM and the model server.
 - A kill verifies the executable **and** the process start time before signalling,
   because up to fifteen seconds pass between the menu being drawn and the click,
   and macOS reuses PIDs.
+- Branch deletion uses `git branch -d`, the form git can refuse, and nothing
+  that rewrites history starts in the middle of a rebase or a merge.
+- Settings are written by one writer, `lib/setconfig.py`, which escapes what it
+  stores: a value is never run when the bars source the file.
 - The bars never write outside their own cache directory and the config file.
