@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Fixed
+- **llama-swap bar** — showing a loaded model's context no longer keeps it
+  loaded: its slots are read from the model's own server, not through
+  llama-swap's `/upstream`, which counted every poll as use, so the `ttl`
+  unloads it on time.
+
 ## [0.1.0] - 2026-10-17
 
 First public release. Four SwiftBar bars, an installer, and a test suite.

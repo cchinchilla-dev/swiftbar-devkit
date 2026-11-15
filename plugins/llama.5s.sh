@@ -179,6 +179,11 @@ else
   echo "Models"
 fi
 
+# Slots straight from each llama-server: llama-swap counts a request through /upstream as use, and a poll every five
+# seconds there kept a model loaded past its ttl.
+PROXIES=""
+[ -n "$LOADED" ] && PROXIES="$(curl -s -m 3 "$ADDR/running" 2>/dev/null | jq -r '.running[]? | "\(.model)\t\(.proxy)"' 2>/dev/null)"
+
 # Id and state in one jq: a second one per model, to look the state back up,
 # was a fork per row every five seconds.
 while IFS=$'\t' read -r M STATE; do
@@ -188,7 +193,12 @@ while IFS=$'\t' read -r M STATE; do
       echo "--● $M"
       # The context window in use is the number that decides whether the next
       # request fits, so it belongs next to the model, not buried in /slots.
-      SLOT="$(curl -sL -m 3 "$ADDR/upstream/$M/slots" 2>/dev/null)"
+      PROXY="$(printf '%s\n' "$PROXIES" | awk -F'\t' -v m="$M" '$1 == m { print $2; exit }')"
+      case "$PROXY" in
+        http://localhost:*|http://127.0.0.1:*) SLOT="$(curl -s -m 3 "$PROXY/slots" 2>/dev/null)" ;;
+        *) SLOT="" ;;
+      esac
+      [ -n "$SLOT" ] || SLOT='[]'
       NCTX="$(printf '%s' "$SLOT" | jq -r '.[0].n_ctx // "?"' 2>/dev/null)"
       USED="$(printf '%s' "$SLOT" | jq -r '.[0].n_past // .[0].n_prompt_tokens // 0' 2>/dev/null)"
       [ "$NCTX" != "?" ] && echo "----ctx ${USED:-0} / $NCTX | $MONO"

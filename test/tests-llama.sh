@@ -27,16 +27,22 @@ LLAMA_ACTION="$ACTION"
 EOF
 export SWIFTBAR_CONFIG="$CFG"
 
-# $1 = health body ("OK" or empty)   $2 = models json   $3 = launchd loaded?
+RUNNING_LOCAL='{"running":[{"model":"qwen3.5-9b","proxy":"http://localhost:5800"}]}'
+RUNNING_REMOTE='{"running":[{"model":"qwen3.5-9b","proxy":"http://example.com:5800"}]}'
+
+# $1 = health body ("OK" or empty)   $2 = models json   $3 = launchd loaded?   $4 = /running json
 stubs() {
+  : > "$TMP/curl.log"
   cat > "$STUB/curl" <<EOF
 #!/bin/bash
 url="\${@: -1}"
+echo "\$url" >> "$TMP/curl.log"
 case "\$url" in
   */health)   printf '%s' '$1' ;;
   */models)   printf '%s' '$2' ;;
+  */running)  printf '%s' '${4:-$RUNNING_LOCAL}' ;;
   */metrics)  printf 'llamaswap_memory_used_bytes 26706182144\nllamaswap_memory_total_bytes 51539607552\nllamaswap_gpu_util_percent{id="0",name="GPU"} 13\n' ;;
-  */slots)    printf '%s' '[{"n_ctx":30720,"n_past":1234}]' ;;
+  http://localhost:5800/slots|http://example.com:5800/slots) printf '%s' '[{"n_ctx":30720,"n_past":1234}]' ;;
   *)          printf '' ;;
 esac
 exit 0
@@ -85,6 +91,15 @@ has   "icon is the filled stack"       "$R" "sfimage=square.stack.3d.up.fill"
 # The context in use is what decides whether the next request fits.
 has   "context in use is shown"        "$R" "ctx 1234 / 30720"
 has   "it can be unloaded"             "$R" "param1=unloadone param2=\"qwen3.5-9b\""
+# llama-swap counts a request through /upstream as use: polled there, a model never reached its ttl.
+has   "slots come from its own server" "$(cat "$TMP/curl.log")" "http://localhost:5800/slots"
+lacks "nothing goes through /upstream" "$(cat "$TMP/curl.log")" "/upstream/"
+
+section "STATE: A MODEL SERVED FROM ANOTHER HOST"
+stubs "OK" "$NINE_LOADED" yes "$RUNNING_REMOTE"
+R="$(render)"
+lacks "no context from a remote server" "$R" "ctx 1234"
+lacks "nor is it asked"                 "$(cat "$TMP/curl.log")" "example.com"
 
 section "STATE: A MODEL IS LOADING"
 stubs "OK" "$MID_LOAD" yes
