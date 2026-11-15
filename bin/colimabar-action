@@ -30,6 +30,16 @@ notify() {
     >/dev/null 2>&1
 }
 
+# terminal=false leaves no window, so a start that failed looked exactly like
+# one that never happened. Keep the output, and say so when it fails.
+logged() {   # $1=what, for the notification  rest=command
+  local what="$1"; shift
+  "$@" > "$CACHE/last.log" 2>&1 && return 0
+  local rc=$?
+  notify "$what failed (exit $rc)" "$(tail -n 1 "$CACHE/last.log") — full output in $CACHE/last.log"
+  return "$rc"
+}
+
 # Cancel is the default button: this guards destructive verbs, so a stray
 # Return must not confirm them.
 confirm() {
@@ -48,10 +58,10 @@ pause() {
 
 # With terminal=false there is no window showing progress, and starting or
 # stopping the VM takes half a minute. The marker lets the menu say what is
-# going on; the trap clears it even if the action fails or gets killed, so it
-# never gets left behind.
+# going on; the trap clears it even if the action fails or gets killed, and
+# the PID in it lets the menu drop it when nothing could (kill -9).
 mkdir -p "$CACHE"
-mark()   { echo "$1" > "$CACHE/operation"; trap unmark EXIT INT TERM; }
+mark()   { echo "$$ $1" > "$CACHE/operation"; trap unmark EXIT INT TERM; }
 unmark() { rm -f "$CACHE/operation"; }
 
 # SwiftBar opens the terminal.true window by sending Cmd+T through System
@@ -91,6 +101,19 @@ kit_dir() {
   (cd "$s/.." 2>/dev/null && pwd)
 }
 
+# The docker context of the profile the menu was showing: the bar lists its
+# containers through it, and acting through the current one reached another
+# VM's daemon, or none. Colima names the default's context plain "colima".
+# Without a profile (a menu drawn before this), the current context, as before.
+ctx_of() { if [[ "${1:-default}" == default ]]; then echo colima; else echo "colima-$1"; fi; }
+DCTX=""
+case "$VERB" in
+  cstart|cstop|crestart|logs|stats|exec) DCTX="${3:+$(ctx_of "$3")}" ;;
+  crm)                                   DCTX="${4:+$(ctx_of "$4")}" ;;
+  prune|prune-all)                       DCTX="${ARG:+$(ctx_of "$ARG")}" ;;
+esac
+dk() { docker ${DCTX:+--context "$DCTX"} "$@"; }
+
 case "${1:-}" in
   logs|exec|stats|shell|prune|prune-all|fixcreds|lazy)
     in_terminal "$@" && exit 0
@@ -102,13 +125,13 @@ case "$VERB" in
   # mark/unmark: these take half a minute with terminal=false, so without a
   # marker the menu looked like the click had done nothing and invited a
   # second one on top of the first.
-  start)     mark "Starting…";   colima start ${ARG:+--profile "$ARG"} ;;
+  start)     mark "Starting…";   logged "Starting ${ARG:-default}" colima start ${ARG:+--profile "$ARG"} ;;
   # Every container goes down with the VM, and whatever they held only in
   # memory with them: one stray click on a menu that refreshes under you.
   stop)      confirm "Stop ${ARG:-default}?" "Every container in it stops too." "Stop" || exit 0
-             mark "Stopping…";   colima stop  ${ARG:+"$ARG"} ;;
+             mark "Stopping…";   logged "Stopping ${ARG:-default}" colima stop ${ARG:+"$ARG"} ;;
   restart)   confirm "Restart ${ARG:-default}?" "Every container in it is stopped and started again." "Restart" || exit 0
-             mark "Restarting…"; colima restart ${ARG:+"$ARG"} ;;
+             mark "Restarting…"; logged "Restarting ${ARG:-default}" colima restart ${ARG:+"$ARG"} ;;
   # --profile, like every other call here: without it these two always spoke
   # to the default instance, whatever the menu was showing.
   shell)     colima ssh ${ARG:+--profile "$ARG"} ;;
@@ -120,18 +143,25 @@ case "$VERB" in
 
   # Switch the client back to the Colima endpoint. The usual reason the VM is
   # up and docker still says nothing: a context left over from Docker Desktop.
+  # The profile's own context, and a word about DOCKER_HOST, which overrides
+  # whichever context is current and would make the switch look like a no-op.
   usecontext)
-    if OUT="$(docker context use colima 2>&1)"; then
-      notify "Docker" "Now using the colima context."
+    CTX="$(ctx_of "$ARG")"
+    if OUT="$(docker context use "$CTX" 2>&1)"; then
+      if [[ -n "${DOCKER_HOST:-}" ]]; then
+        notify "Docker" "Now using the $CTX context, but DOCKER_HOST is set and overrides it."
+      else
+        notify "Docker" "Now using the $CTX context."
+      fi
     else
       notify "Could not switch context" "$OUT"
     fi
     ;;
 
   # ---- containers
-  cstart)    docker start "$ARG" ;;
-  cstop)     docker stop "$ARG" ;;
-  crestart)  docker restart "$ARG" ;;
+  cstart)    dk start "$ARG" ;;
+  cstop)     dk stop "$ARG" ;;
+  crestart)  dk restart "$ARG" ;;
   # Ask first. This sits one line under Start in the same submenu, and it is
   # the only destructive verb here that used to fire instantly — prune and
   # prune-all both go through a Terminal and docker's own y/N prompt. Removing
@@ -141,30 +171,30 @@ case "$VERB" in
 "Its writable layer and configuration are deleted permanently. Named volumes survive; anonymous ones are orphaned.
 
 This cannot be undone." || exit 0
-    OUT="$(docker rm "$ARG" 2>&1)" \
+    OUT="$(dk rm "$ARG" 2>&1)" \
       || notify "Could not remove" "$OUT"
     ;;
-  logs)      docker logs -f --tail 200 "$ARG" ;;
-  stats)     docker stats "$ARG" ;;
+  logs)      dk logs -f --tail 200 "$ARG" ;;
+  stats)     dk stats "$ARG" ;;
   exec)
     # Try bash, fall back to sh for distroless/alpine images
-    docker exec -it "$ARG" bash 2>/dev/null || docker exec -it "$ARG" sh
+    dk exec -it "$ARG" bash 2>/dev/null || dk exec -it "$ARG" sh
     ;;
 
   # ---- cleanup
   prune)
-    docker system prune
-    rm -f "$CACHE"/df "$CACHE"/vmdf "$CACHE"/vmdf-*
+    dk system prune
+    rm -f "$CACHE"/df "$CACHE"/df-* "$CACHE"/vmdf "$CACHE"/vmdf-*
     pause
     ;;
   prune-all)
     echo "This removes ALL unused images, not just the dangling ones."
-    docker system prune -a
-    rm -f "$CACHE"/df "$CACHE"/vmdf "$CACHE"/vmdf-*
+    dk system prune -a
+    rm -f "$CACHE"/df "$CACHE"/df-* "$CACHE"/vmdf "$CACHE"/vmdf-*
     pause
     ;;
   uncache)
-    rm -f "$CACHE"/df "$CACHE"/vmdf "$CACHE"/vmdf-*
+    rm -f "$CACHE"/df "$CACHE"/df-* "$CACHE"/vmdf "$CACHE"/vmdf-*
     ;;
 
   # ---- credentials
@@ -215,19 +245,21 @@ PY
       echo "since the service is what must hold it in the foreground. Takes a moment…"
       colima stop ${ARG:+"$ARG"}
     fi
-    brew services start colima
+    # restart, not start: a job launchd still holds — in error, or exited — makes
+    # start's `launchctl bootstrap` fail; restart unloads it first.
+    logged "Starting the service" brew services restart colima
     rm -f "$CACHE"/svc
     unmark
     pause
     ;;
   svcoff)
-    confirm "Stop the Colima service?" "The VM stops with it, and every container in it." "Stop" || exit 0
+    confirm "Stop the Colima service?" "The default VM stops with it, and every container in it." "Stop" || exit 0
     mark "Stopping the service…"
     # brew services only unloads the agent: the VM lives on separately
     brew services stop colima
-    # The profile the menu is showing, like every other call here: without it
-    # this stopped the default instance while the real one kept running.
-    colima stop ${ARG:+"$ARG"}
+    # Default only: it is the one profile Homebrew's service runs. Taking the
+    # profile the menu showed — the last one running — stopped a second VM too.
+    colima stop default
     rm -f "$CACHE"/svc
     unmark
     pause
@@ -250,6 +282,12 @@ PY
     [ -f "$kit/lib/setconfig.py" ] || { notify "Settings" "lib/setconfig.py is not next to this script. Install with install.sh, which links the bars rather than copying them."; exit 1; }
     python3 "$kit/lib/setconfig.py" "$CONFIG" "$ARG" "${3:-}" || exit 1
     osascript -e "display notification \"$ARG = ${3:-}\" with title \"Settings\"" >/dev/null 2>&1
+    ;;
+
+  # The service's own log, where launchd's colima says why it failed.
+  openlog)
+    LOG="$(brew --prefix)/var/log/colima.log"
+    if [ -f "$LOG" ]; then open -a Console "$LOG"; else notify "Colima" "No service log at $LOG yet."; fi
     ;;
 
   openconfig)

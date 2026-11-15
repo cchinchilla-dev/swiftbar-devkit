@@ -7,6 +7,12 @@
   loaded: its slots are read from the model's own server, not through
   llama-swap's `/upstream`, which counted every poll as use, so the `ttl`
   unloads it on time.
+- **Colima bar** — with two VMs up, its containers are listed and acted on
+  through the profile's own docker context, not whatever `DOCKER_HOST` or the
+  current context point at. A wedged VM or daemon no longer holds the menu (each
+  call is capped at 5 s); a service in `error` says so, with **Restart service**
+  and **Open log**; a failed start, stop or restart sends a notification; and
+  the "Starting…" line lasts as long as the action, not five minutes.
 
 ## [0.1.0] - 2026-10-17
 

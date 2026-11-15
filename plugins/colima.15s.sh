@@ -41,11 +41,14 @@ MONO="font=Menlo size=11"
 
 # Long actions run with terminal=false, with no window to show signs of life.
 # They leave a marker here so the menu can say what is going on instead of
-# looking like the click did nothing. If an action dies, the marker expires.
+# looking like the click did nothing. It carries the action's PID: expiring it
+# after 300 s hid a first start still pulling its image, and kept a dead
+# action's marker up for five minutes.
 OPERATION=""
 if [[ -f "$CACHE/operation" ]]; then
-  if [[ $(( $(date +%s) - $(stat -f %m "$CACHE/operation") )) -lt 300 ]]; then
-    OPERATION="$(cat "$CACHE/operation" 2>/dev/null)"
+  read -r OP_PID OP_MSG < "$CACHE/operation"
+  if [[ "$OP_PID" =~ ^[0-9]+$ ]] && kill -0 "$OP_PID" 2>/dev/null; then
+    OPERATION="$OP_MSG"
   else
     rm -f "$CACHE/operation"
   fi
@@ -112,7 +115,8 @@ service_and_refresh() {
   if [[ -n "$OPERATION" ]]; then
     echo "$OPERATION | $MONO"
   else
-    echo "Stop the service… | bash=$ACTION param1=svcoff param2=$NAME terminal=false refresh=true"
+    # No profile: the service only runs default, and that is all it may stop.
+    echo "Stop the service… | bash=$ACTION param1=svcoff terminal=false refresh=true"
   fi
   echo "Refresh | refresh=true"
 }
@@ -141,6 +145,20 @@ cached() {   # $1=key  rest=command
 
 human() { awk -v b="$1" 'BEGIN{ if(b=="")print "?"; else printf "%.0f GiB", b/1073741824 }'; }
 
+# Caps a command at $1 seconds: a wedged lima or a daemon that accepts and
+# never answers blocked the render, and SwiftBar waits for it. Not the usual
+# `alarm; exec`: colima and docker are Go, which ignores SIGALRM, and both
+# leave a child (limactl, ssh, the compose plugin) holding the pipe open — so
+# the whole process group gets killed. macOS has no timeout(1); it has perl.
+tmo() {
+  perl -e '
+    my $t = shift; my $p = fork; exit 125 unless defined $p;
+    if (!$p) { setpgrp(0, 0); exec { $ARGV[0] } @ARGV or exit 127 }
+    setpgrp($p, $p);
+    $SIG{ALRM} = sub { kill "KILL", -$p }; alarm $t;
+    waitpid $p, 0; exit($? & 127 ? 124 : $? >> 8)' "$@"
+}
+
 # ------------------------------------------------------------------- state
 
 if ! command -v colima >/dev/null 2>&1; then
@@ -151,12 +169,17 @@ if ! command -v colima >/dev/null 2>&1; then
   exit 0
 fi
 
-SERVICE_ON=0
-grep -qE '^colima +started' <<< "$(cached svc brew services list)" && SERVICE_ON=1
+# The state itself, not just started-or-not: `error` and `unknown` read as
+# "Service stopped", and its Start cannot recover a job launchd still holds.
+read_service() {
+  SVC_STATE="$(awk '$1 == "colima" { print $2; exit }' <<< "$(cached svc brew services list)")"
+  SERVICE_ON=0; [[ "$SVC_STATE" == started ]] && SERVICE_ON=1
+}
+read_service
 
 RUNNING_VM=0
 NAME="default"
-INSTANCES="$(LIST_JSON="$(colima list --json 2>/dev/null)" python3 -c '
+INSTANCES="$(LIST_JSON="$(tmo 5 colima list --json 2>/dev/null)" python3 -c '
 import os, json
 
 raw = os.environ.get("LIST_JSON", "").strip()
@@ -205,11 +228,15 @@ done <<< "$INSTANCES"
 # window where the icon would otherwise be lying.
 if [[ ( $SERVICE_ON -eq 1 && $RUNNING_VM -eq 0 ) || ( $SERVICE_ON -eq 0 && $RUNNING_VM -eq 1 ) ]]; then
   rm -f "$CACHE/svc"
-  SERVICE_ON=0
-  grep -qE '^colima +started' <<< "$(cached svc brew services list)" && SERVICE_ON=1
+  read_service
 fi
 
 # --------------------------------------------------------------- menu bar
+
+# The daemon of the profile on show, not whatever the current context or
+# DOCKER_HOST point at: with two VMs up it listed the other VM's containers.
+# --context wins over DOCKER_HOST. Colima names the default's context "colima".
+DOCKER_CTX="colima"; [[ "$NAME" != default ]] && DOCKER_CTX="colima-$NAME"
 
 # The VM decides the icon, not the service. Keying it off the service meant a
 # perfectly healthy VM that Homebrew did not happen to be managing rendered as
@@ -217,8 +244,8 @@ fi
 # stale icon, just in the opposite quadrant.
 DOCKER_OK=1
 if [[ $RUNNING_VM -eq 1 ]]; then
-  ALL_RAW="$(docker ps -a --format '{{.ID}}|{{.Names}}|{{.Status}}|{{.Image}}|{{.Ports}}' 2>/dev/null)" \
-    || DOCKER_OK=0
+  ALL_RAW="$(tmo 5 docker --context "$DOCKER_CTX" ps -a --format '{{.ID}}|{{.Names}}|{{.Status}}|{{.Image}}|{{.Ports}}' 2>/dev/null)" \
+    || { DOCKER_RC=$?; DOCKER_OK=0; }
   # Running is what `docker ps` would list, and its Status always starts "Up":
   # counted from the same listing instead of asking the daemon twice a render.
   N_UP=0; N_ALL=0
@@ -246,9 +273,20 @@ sep
 # Only bail out when there is genuinely nothing running. A VM that is up while
 # the service is unregistered still has containers worth showing.
 if [[ $SERVICE_ON -eq 0 && $RUNNING_VM -eq 0 ]]; then
-  echo "Service stopped"
+  SVC_BAD=0
+  case "$SVC_STATE" in error|unknown|other) SVC_BAD=1 ;; esac
+  if [[ $SVC_BAD -eq 1 ]]; then
+    echo "⚠ Service $SVC_STATE | $MONO"
+  else
+    echo "Service stopped"
+  fi
   if [[ -n "$OPERATION" ]]; then
     echo "$OPERATION | $MONO"
+  elif [[ $SVC_BAD -eq 1 ]]; then
+    # svcon restarts the job, unloading the failed one first; why it failed is
+    # in the log, and nowhere else.
+    echo "Restart service | bash=$ACTION param1=svcon param2=default terminal=false refresh=true"
+    echo "Open log | bash=$ACTION param1=openlog terminal=false"
   else
     echo "Start | bash=$ACTION param1=svcon param2=$NAME terminal=false refresh=true"
   fi
@@ -280,13 +318,20 @@ fi
 
 # A reachable VM with an unreachable daemon is almost always the docker context
 # pointing somewhere else, so offer that as the fix rather than just the fact.
+# Not when the VM has no socket yet (still booting, or not the docker runtime)
+# or the daemon took too long: no context reaches either of those.
+SOCK="${COLIMA_HOME:-$HOME/.colima}/$NAME/docker.sock"
 if [[ ${DOCKER_OK:-1} -eq 0 ]]; then
   echo "⚠ Docker is not answering | $MONO"
-  if command -v docker >/dev/null 2>&1; then
-    echo "--The VM is up but the docker client cannot reach it — usually the wrong context. | $MONO"
-    echo "--Point docker at Colima | bash=$ACTION param1=usecontext terminal=false refresh=true"
-  else
+  if ! command -v docker >/dev/null 2>&1; then
     echo "--There is no docker command on PATH. Install it with: brew install docker | $MONO"
+  elif [[ ! -S "$SOCK" ]]; then
+    echo "--The VM is up but has no docker socket — still starting, or not running docker. | $MONO"
+  elif [[ ${DOCKER_RC:-0} -eq 124 ]]; then
+    echo "--The daemon did not answer within 5 s. | $MONO"
+  else
+    echo "--The VM is up but docker cannot reach it through the $DOCKER_CTX context. | $MONO"
+    echo "--Point docker at Colima | bash=$ACTION param1=usecontext param2=$NAME terminal=false refresh=true"
   fi
   # Restarting the VM is often what fixes an unresponsive daemon, so these have
   # to stay reachable. The old early exit removed them in exactly that state.
@@ -355,7 +400,7 @@ if [[ "$SHOW_STATS" = "1" && $RUNNING_VM -eq 1 && ${DOCKER_OK:-1} -eq 1 ]]; then
   if [[ -s "$SF" ]] && (( $(date +%s) - $(stat -f %m "$SF") < STATS_TTL )); then
     STATS="$(cat "$SF")"
   else
-    STATS="$(docker stats --no-stream --format '{{.ID}}|{{.CPUPerc}}|{{.MemUsage}}' 2>/dev/null)"
+    STATS="$(tmo 10 docker --context "$DOCKER_CTX" stats --no-stream --format '{{.ID}}|{{.CPUPerc}}|{{.MemUsage}}' 2>/dev/null)"
     [[ -n "$STATS" ]] && printf '%s' "$STATS" > "$SF"
   fi
 fi
@@ -394,25 +439,26 @@ while IFS='|' read -r id nm st img ports; do
     done <<< "${ports//, /$'\n'}"
   fi
   echo "-----"
-  echo "--Logs | bash=$ACTION param1=logs param2=$id terminal=false sfimage=doc.text"
-  echo "--Shell | bash=$ACTION param1=exec param2=$id terminal=false sfimage=terminal"
-  echo "--Stats | bash=$ACTION param1=stats param2=$id terminal=false sfimage=chart.bar"
+  # The profile rides along: the action must reach the daemon these came from.
+  echo "--Logs | bash=$ACTION param1=logs param2=$id param3=$NAME terminal=false sfimage=doc.text"
+  echo "--Shell | bash=$ACTION param1=exec param2=$id param3=$NAME terminal=false sfimage=terminal"
+  echo "--Stats | bash=$ACTION param1=stats param2=$id param3=$NAME terminal=false sfimage=chart.bar"
   echo "--Copy container ID | bash=$ACTION param1=ccopy param2=$id terminal=false sfimage=doc.on.doc"
   echo "-----"
   if [[ "$st" == Up* ]]; then
-    echo "--Stop | bash=$ACTION param1=cstop param2=$id terminal=false refresh=true"
-    echo "--Restart | bash=$ACTION param1=crestart param2=$id terminal=false refresh=true"
+    echo "--Stop | bash=$ACTION param1=cstop param2=$id param3=$NAME terminal=false refresh=true"
+    echo "--Restart | bash=$ACTION param1=crestart param2=$id param3=$NAME terminal=false refresh=true"
   else
-    echo "--Start | bash=$ACTION param1=cstart param2=$id terminal=false refresh=true"
+    echo "--Start | bash=$ACTION param1=cstart param2=$id param3=$NAME terminal=false refresh=true"
     echo "-----"
     # The name rides along so the confirmation can say what is about to go.
-    echo "--Remove… | bash=$ACTION param1=crm param2=$id param3=\"$nm\" terminal=false refresh=true"
+    echo "--Remove… | bash=$ACTION param1=crm param2=$id param3=\"$nm\" param4=$NAME terminal=false refresh=true"
   fi
 done <<< "$ALL_RAW"
 
 # ----------------------------------------------------------------- compose
 
-COMPOSE="$(docker compose ls --format json 2>/dev/null)"
+COMPOSE="$(tmo 5 docker --context "$DOCKER_CTX" compose ls --format json 2>/dev/null)"
 if [[ -n "$COMPOSE" && "$COMPOSE" != "[]" ]]; then
   sep
   echo "Compose"
@@ -431,13 +477,13 @@ fi
 
 sep
 echo "Storage"
-DF="$(cached df docker system df --format '{{.Type}}\t{{.Size}}\t{{.Reclaimable}}')"
+DF="$(cached "df-$NAME" tmo 10 docker --context "$DOCKER_CTX" system df --format '{{.Type}}\t{{.Size}}\t{{.Reclaimable}}')"
 while IFS=$'\t' read -r type size recl; do
   [[ -z "$type" ]] && continue
   echo "--$type: $size ($recl reclaimable) | $MONO"
 done <<< "$DF"
 
-VMDF="$(cached "vmdf-$NAME" colima ssh --profile "$NAME" -- df -h /var/lib/docker)"
+VMDF="$(cached "vmdf-$NAME" tmo 10 colima ssh --profile "$NAME" -- df -h /var/lib/docker)"
 PCT="$(awk 'NR==2{gsub("%","",$5); print $5}' <<< "$VMDF")"
 USED="$(awk 'NR==2{print $3" / "$2}' <<< "$VMDF")"
 if [[ -n "$PCT" ]]; then
@@ -448,8 +494,8 @@ if [[ -n "$PCT" ]]; then
   fi
 fi
 echo "-----"
-echo "--Prune stopped and cache | bash=$ACTION param1=prune terminal=false refresh=true"
-echo "--Prune images too | bash=$ACTION param1=prune-all terminal=false refresh=true"
+echo "--Prune stopped and cache | bash=$ACTION param1=prune param2=$NAME terminal=false refresh=true"
+echo "--Prune images too | bash=$ACTION param1=prune-all param2=$NAME terminal=false refresh=true"
 echo "--Recheck sizes | bash=$ACTION param1=uncache terminal=false refresh=true"
 
 settings_menu
